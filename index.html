@@ -1,4 +1,79 @@
-import { useState, useEffect, useMemo } from "react";
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>H2O Water Limited — AquaFlow Billing System</title>
+  <meta name="description" content="Smart Water Billing and Management System"/>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💧</text></svg>"/>
+
+  <!--
+    LOAD ORDER (must be synchronous, no async/defer):
+    1. React core
+    2. ReactDOM
+    3. Babel standalone (transpiles JSX in the text/babel script below)
+  -->
+  <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.23.5/babel.min.js"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body, #root { min-height: 100vh; }
+    body { font-family: system-ui, sans-serif; background: #f4f8fb; }
+
+    /* ── Loading splash ── */
+    #loading {
+      position: fixed; inset: 0; z-index: 9999;
+      background: linear-gradient(135deg, #001f3d 0%, #0077b6 60%, #00b4d8 100%);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      color: #fff; gap: 12px;
+      transition: opacity 0.5s ease;
+    }
+    #loading .drop { font-size: 64px; animation: bounce 1.4s ease-in-out infinite; }
+    #loading h1   { font-size: 26px; font-weight: 800; letter-spacing: -0.5px; }
+    #loading p    { font-size: 14px; opacity: 0.65; }
+    #loading .bar-outer {
+      width: 200px; height: 5px;
+      background: rgba(255,255,255,0.2);
+      border-radius: 5px; overflow: hidden; margin-top: 10px;
+    }
+    #loading .bar-inner {
+      height: 5px; background: #fff;
+      border-radius: 5px;
+      animation: grow 2s ease-in-out forwards;
+    }
+    @keyframes bounce { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-12px)} }
+    @keyframes grow   { 0%{width:0%} 70%{width:80%} 100%{width:100%} }
+
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar       { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #f0f7ff; }
+    ::-webkit-scrollbar-thumb { background: #aacfe0; border-radius: 4px; }
+  </style>
+</head>
+<body>
+
+  <!-- Loading screen -->
+  <div id="loading">
+    <div class="drop">💧</div>
+    <h1>H2O Water Limited</h1>
+    <p>AquaFlow Smart Billing System — Loading…</p>
+    <div class="bar-outer"><div class="bar-inner"></div></div>
+  </div>
+
+  <!-- React root -->
+  <div id="root"></div>
+
+  <!--
+    ALL JSX lives in ONE text/babel script.
+    React hooks are destructured at the top so they are always defined
+    before any component code runs.
+  -->
+  <script type="text/babel" data-presets="react,env">
+const { useState, useEffect, useMemo, useCallback } = React;
+
 
 // ─── SEED DATA ────────────────────────────────────────────────────────────────
 const RATE_PER_UNIT = 150;
@@ -5544,8 +5619,197 @@ const AdminDash = ({ store, onLogout }) => {
   );
 };
 
+// ── Standalone: Profile Page (extracted to fix React hooks rule) ─────────────
+const ProfilePage = ({ user, store, showToast, myBills, totalPaid, balance }) => {
+  const [editing,   setEditing]   = useState(false);
+  const [profForm,  setProfForm]  = useState({ name:user.name, phone:user.phone, email:user.email, address:user.address||"" });
+  const [pwForm,    setPwForm]    = useState({ current:"", next:"", confirm:"" });
+  const [pwErr,     setPwErr]     = useState("");
+  const [pwSuccess, setPwSuccess] = useState(false);
+
+  const saveProfile = () => {
+    store.setUsers(store.users.map(u => u.id===user.id ? { ...u, ...profForm } : u));
+    showToast("Profile updated successfully!");
+    setEditing(false);
+  };
+  const changePassword = () => {
+    setPwErr(""); setPwSuccess(false);
+    if (pwForm.current !== user.password) return setPwErr("Current password is incorrect.");
+    if (pwForm.next.length < 6)           return setPwErr("New password must be at least 6 characters.");
+    if (pwForm.next !== pwForm.confirm)   return setPwErr("Passwords do not match.");
+    store.setUsers(store.users.map(u => u.id===user.id ? { ...u, password:pwForm.next } : u));
+    setPwSuccess(true);
+    setPwForm({ current:"", next:"", confirm:"" });
+  };
+
+  const fieldSt = { width:"100%", padding:"10px 14px", border:"1.5px solid #dde8f0", borderRadius:10, fontSize:14, color:"#0a2540", background:editing?"#f8fbff":"#f4f8fb", outline:"none", boxSizing:"border-box" };
+  const labelSt = { display:"block", fontSize:11, fontWeight:700, color:"#5b8fa8", marginBottom:5, textTransform:"uppercase", letterSpacing:"0.08em" };
+
+  return (
+    <div>
+      <h2 style={h2style}>My Profile</h2>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))", gap:20 }}>
+        <div style={{ background:"#fff", borderRadius:18, padding:24, boxShadow:"0 2px 16px rgba(10,37,64,0.07)", border:"1px solid #e8f4fd" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:16, marginBottom:22, paddingBottom:20, borderBottom:"1px solid #f0f7ff" }}>
+            <div style={{ width:64, height:64, background:"linear-gradient(135deg,#0077b6,#00b4d8)", borderRadius:18, display:"flex", alignItems:"center", justifyContent:"center", color:"#fff", fontWeight:800, fontSize:28, flexShrink:0 }}>
+              {user.name.charAt(0)}
+            </div>
+            <div>
+              <div style={{ fontWeight:800, color:"#0a2540", fontSize:18 }}>{user.name}</div>
+              <div style={{ fontSize:13, color:"#94a8b8", marginTop:2 }}>{user.area} · {user.type||"Residential"}</div>
+              <div style={{ marginTop:6, display:"flex", gap:8 }}>
+                <span style={{ background:"#d1fae5", color:"#065f46", borderRadius:20, padding:"2px 10px", fontSize:11, fontWeight:700 }}>● Active</span>
+                <span style={{ background:"#dbeafe", color:"#1e40af", borderRadius:20, padding:"2px 10px", fontSize:11, fontWeight:700 }}>Since {user.joinDate}</span>
+              </div>
+            </div>
+          </div>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+            <h3 style={{ margin:0, fontSize:15, color:"#0a2540", fontWeight:800 }}>Account Details</h3>
+            <button onClick={()=>setEditing(!editing)} style={{ background:editing?"#fee2e2":"#f0f7ff", color:editing?"#dc2626":"#0077b6", border:"none", borderRadius:8, padding:"6px 14px", fontWeight:700, fontSize:12, cursor:"pointer", display:"flex", alignItems:"center", gap:6 }}>
+              <Icon name={editing?"x":"edit"} size={13} color={editing?"#dc2626":"#0077b6"}/> {editing?"Cancel":"Edit"}
+            </button>
+          </div>
+          {[{label:"Full Name",key:"name",type:"text"},{label:"Phone",key:"phone",type:"tel"},{label:"Email",key:"email",type:"email"},{label:"Address",key:"address",type:"text"}].map(f=>(
+            <div key={f.key} style={{ marginBottom:14 }}>
+              <label style={labelSt}>{f.label}</label>
+              <input type={f.type} value={profForm[f.key]} disabled={!editing} onChange={e=>setProfForm(p=>({...p,[f.key]:e.target.value}))} style={fieldSt}/>
+            </div>
+          ))}
+          {[{label:"Meter Number",value:user.meterNo},{label:"Area",value:user.area}].map(f=>(
+            <div key={f.label} style={{ marginBottom:14 }}>
+              <label style={labelSt}>{f.label}</label>
+              <input type="text" value={f.value} disabled style={{ ...fieldSt, background:"#f4f8fb", color:"#94a8b8" }}/>
+            </div>
+          ))}
+          {editing && (
+            <button onClick={saveProfile} style={{ width:"100%", padding:"11px", background:"linear-gradient(135deg,#0077b6,#00b4d8)", color:"#fff", border:"none", borderRadius:12, fontWeight:700, fontSize:14, cursor:"pointer", marginTop:4, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+              <Icon name="check" size={16} color="#fff"/> Save Changes
+            </button>
+          )}
+        </div>
+        <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
+          <div style={{ background:"#fff", borderRadius:18, padding:24, boxShadow:"0 2px 16px rgba(10,37,64,0.07)", border:"1px solid #e8f4fd" }}>
+            <h3 style={{ margin:"0 0 18px", fontSize:15, color:"#0a2540", fontWeight:800 }}>🔒 Change Password</h3>
+            {["current","next","confirm"].map((k,i)=>(
+              <div key={k} style={{ marginBottom:14 }}>
+                <label style={labelSt}>{["Current Password","New Password","Confirm New Password"][i]}</label>
+                <input type="password" value={pwForm[k]} onChange={e=>setPwForm(p=>({...p,[k]:e.target.value}))} placeholder="••••••••" style={{ ...fieldSt, background:"#f8fbff" }}/>
+              </div>
+            ))}
+            {pwErr     && <div style={{ background:"#fee2e2", color:"#991b1b", padding:"10px 14px", borderRadius:10, fontSize:13, marginBottom:12 }}>{pwErr}</div>}
+            {pwSuccess && <div style={{ background:"#d1fae5", color:"#065f46", padding:"10px 14px", borderRadius:10, fontSize:13, fontWeight:700, marginBottom:12 }}>✓ Password changed successfully!</div>}
+            <button onClick={changePassword} style={{ width:"100%", padding:"10px", background:"linear-gradient(135deg,#7c3aed,#a78bfa)", color:"#fff", border:"none", borderRadius:12, fontWeight:700, fontSize:14, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+              <Icon name="check" size={15} color="#fff"/> Update Password
+            </button>
+          </div>
+          <div style={{ background:"linear-gradient(135deg,#0a2540,#0d3a60)", borderRadius:18, padding:22, color:"#fff" }}>
+            <h3 style={{ margin:"0 0 16px", fontSize:14, opacity:0.8, fontWeight:700 }}>Account Summary</h3>
+            {[{label:"Total Bills",value:myBills.length},{label:"Total Paid",value:fmtKES(totalPaid)},{label:"Balance Due",value:fmtKES(balance),red:balance>0},{label:"Member Since",value:user.joinDate}].map(s=>(
+              <div key={s.label} style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:"1px solid rgba(255,255,255,0.08)", fontSize:13 }}>
+                <span style={{ opacity:0.6 }}>{s.label}</span>
+                <b style={{ color:s.red?"#fca5a5":"#fff" }}>{s.value}</b>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ── Standalone: Support Page (extracted to fix React hooks rule) ──────────────
+const SupportPage = ({ user, showToast }) => {
+  const [ticket,    setTicket]    = useState({ subject:"", category:"Billing", message:"" });
+  const [submitted, setSubmitted] = useState(false);
+  const [tickets,   setTickets]   = useState([
+    { id:"t1", subject:"Bill amount seems incorrect", category:"Billing",     date:"2025-04-20", status:"resolved", reply:"Thank you for reaching out. Your bill has been reviewed and is correct based on your meter reading." },
+    { id:"t2", subject:"Meter not accessible",        category:"Meter Issue", date:"2025-05-01", status:"open",     reply:"" },
+  ]);
+
+  const submitTicket = () => {
+    if (!ticket.subject||!ticket.message) return;
+    setTickets(t=>[...t, { id:uid(), ...ticket, date:today(), status:"open", reply:"" }]);
+    setSubmitted(true);
+    setTicket({ subject:"", category:"Billing", message:"" });
+    setTimeout(()=>setSubmitted(false), 4000);
+  };
+
+  const inp = { width:"100%", padding:"10px 14px", border:"1.5px solid #dde8f0", borderRadius:10, fontSize:14, color:"#0a2540", background:"#f8fbff", outline:"none", boxSizing:"border-box" };
+  const lbl = { display:"block", fontSize:11, fontWeight:700, color:"#5b8fa8", marginBottom:5, textTransform:"uppercase", letterSpacing:"0.08em" };
+
+  const faqs = [
+    { q:"How is my bill calculated?",          a:`Your bill = Units consumed × KES ${RATE_PER_UNIT} + KES 200 monthly standing charge. Units = Current reading minus previous reading.` },
+    { q:"When is my bill due?",                a:"Bills are due on the 15th of the following month. E.g., a January bill is due February 15th." },
+    { q:"How do I pay via M-Pesa?",            a:"Go to M-Pesa → Lipa na M-Pesa → Pay Bill. Paybill: 400200. Account Number: your meter number (e.g. MTR-0041)." },
+    { q:"What if my meter reading is wrong?",  a:"Contact us immediately via this support form or call our office. We'll arrange a meter verification visit within 3 working days." },
+    { q:"Can I pay in installments?",          a:"Yes. You can make partial payments and your balance will be carried forward to the next bill. Please contact us to arrange a payment plan." },
+  ];
+
+  return (
+    <div>
+      <h2 style={h2style}>Help & Support</h2>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))", gap:20 }}>
+        {/* Submit ticket */}
+        <div style={{ background:"#fff", borderRadius:18, padding:24, boxShadow:"0 2px 16px rgba(10,37,64,0.07)", border:"1px solid #e8f4fd" }}>
+          <h3 style={{ margin:"0 0 18px", fontSize:15, color:"#0a2540", fontWeight:800 }}>📩 Submit a Support Ticket</h3>
+          {submitted && <div style={{ background:"#d1fae5", color:"#065f46", padding:"12px 14px", borderRadius:10, fontSize:13, fontWeight:700, marginBottom:14 }}>✓ Ticket submitted! We'll respond within 24 hours.</div>}
+          <div style={{ marginBottom:14 }}><label style={lbl}>Subject</label><input value={ticket.subject} onChange={e=>setTicket(t=>({...t,subject:e.target.value}))} style={inp} placeholder="Brief description of your issue"/></div>
+          <div style={{ marginBottom:14 }}>
+            <label style={lbl}>Category</label>
+            <select value={ticket.category} onChange={e=>setTicket(t=>({...t,category:e.target.value}))} style={inp}>
+              {["Billing","Meter Issue","Payment","Account","Other"].map(c=><option key={c}>{c}</option>)}
+            </select>
+          </div>
+          <div style={{ marginBottom:16 }}><label style={lbl}>Message</label><textarea value={ticket.message} onChange={e=>setTicket(t=>({...t,message:e.target.value}))} style={{ ...inp, resize:"vertical", minHeight:100 }} placeholder="Describe your issue in detail…"/></div>
+          <button onClick={submitTicket} style={{ width:"100%", padding:"11px", background:"linear-gradient(135deg,#0077b6,#00b4d8)", color:"#fff", border:"none", borderRadius:12, fontWeight:700, fontSize:14, cursor:"pointer" }}>
+            Submit Ticket
+          </button>
+        </div>
+
+        <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+          {/* Contact info */}
+          <div style={{ background:"linear-gradient(135deg,#0a2540,#0077b6)", borderRadius:18, padding:22, color:"#fff" }}>
+            <h3 style={{ margin:"0 0 16px", fontSize:15, fontWeight:800 }}>📞 Contact Us</h3>
+            {[["Phone","0800 000 000 (Toll Free)"],["Email","support@h2owater.co.ke"],["Office Hours","Mon–Fri, 8AM–5PM"],["Emergency","0722 000 000 (24/7)"],["M-Pesa Paybill","400200"]].map(([k,v])=>(
+              <div key={k} style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:"1px solid rgba(255,255,255,0.1)", fontSize:13 }}>
+                <span style={{ opacity:0.65 }}>{k}</span><b>{v}</b>
+              </div>
+            ))}
+          </div>
+          {/* My tickets */}
+          <div style={{ background:"#fff", borderRadius:18, padding:22, boxShadow:"0 2px 16px rgba(10,37,64,0.07)", border:"1px solid #e8f4fd" }}>
+            <h3 style={{ margin:"0 0 14px", fontSize:15, color:"#0a2540", fontWeight:800 }}>🎫 My Tickets</h3>
+            {tickets.map(t=>(
+              <div key={t.id} style={{ padding:"10px 0", borderBottom:"1px solid #f0f7ff" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:4 }}>
+                  <b style={{ fontSize:13, color:"#0a2540" }}>{t.subject}</b>
+                  <span style={{ background:t.status==="resolved"?"#d1fae5":"#fef3c7", color:t.status==="resolved"?"#065f46":"#92400e", borderRadius:6, padding:"2px 8px", fontSize:11, fontWeight:700 }}>{t.status}</span>
+                </div>
+                <div style={{ fontSize:12, color:"#94a8b8", marginBottom:4 }}>{t.category} · {t.date}</div>
+                {t.reply && <div style={{ background:"#f0f7ff", borderRadius:8, padding:"8px 12px", fontSize:12, color:"#374151" }}>💬 {t.reply}</div>}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* FAQs */}
+      <div style={{ background:"#fff", borderRadius:18, padding:24, boxShadow:"0 2px 16px rgba(10,37,64,0.07)", border:"1px solid #e8f4fd", marginTop:20 }}>
+        <h3 style={{ margin:"0 0 16px", fontSize:15, color:"#0a2540", fontWeight:800 }}>❓ Frequently Asked Questions</h3>
+        {faqs.map((f,i)=>(
+          <details key={i} style={{ marginBottom:10, borderRadius:12, border:"1px solid #e8f4fd", overflow:"hidden" }}>
+            <summary style={{ padding:"12px 16px", fontWeight:700, fontSize:13, color:"#0a2540", cursor:"pointer", background:"#f8fbff", listStyle:"none", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              {f.q} <span style={{ color:"#0077b6", fontSize:18, lineHeight:1 }}>+</span>
+            </summary>
+            <div style={{ padding:"12px 16px", fontSize:13, color:"#374151", lineHeight:1.6, background:"#fff" }}>{f.a}</div>
+          </details>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 // ════════════════════════════════════════════════════════════════════════════
-//  USER DASHBOARD
 // ════════════════════════════════════════════════════════════════════════════
 const UserDash = ({ user, store, onLogout }) => {
   const { bills, payments, setPayments, setBills } = store;
@@ -6124,29 +6388,8 @@ const UserDash = ({ user, store, onLogout }) => {
 
     // ── PAGE: MY PROFILE ────────────────────────────────────────────────────
     if (page==="profile") {
-      const [editing,    setEditing]    = useState(false);
-      const [profForm,   setProfForm]   = useState({ name:user.name, phone:user.phone, email:user.email, address:user.address||"" });
-      const [pwForm,     setPwForm]     = useState({ current:"", next:"", confirm:"" });
-      const [pwErr,      setPwErr]      = useState("");
-      const [pwSuccess,  setPwSuccess]  = useState(false);
-
-      const saveProfile = () => {
-        store.setUsers(store.users.map(u => u.id===user.id ? { ...u, ...profForm } : u));
-        showToast("Profile updated successfully!");
-        setEditing(false);
-      };
-      const changePassword = () => {
-        setPwErr(""); setPwSuccess(false);
-        if (pwForm.current !== user.password) return setPwErr("Current password is incorrect.");
-        if (pwForm.next.length < 6)           return setPwErr("New password must be at least 6 characters.");
-        if (pwForm.next !== pwForm.confirm)   return setPwErr("Passwords do not match.");
-        store.setUsers(store.users.map(u => u.id===user.id ? { ...u, password:pwForm.next } : u));
-        setPwSuccess(true);
-        setPwForm({ current:"", next:"", confirm:"" });
-      };
-
-      const fieldSt = { width:"100%", padding:"10px 14px", border:"1.5px solid #dde8f0", borderRadius:10, fontSize:14, color:"#0a2540", background: editing?"#f8fbff":"#f4f8fb", outline:"none", boxSizing:"border-box" };
-      const labelSt = { display:"block", fontSize:11, fontWeight:700, color:"#5b8fa8", marginBottom:5, textTransform:"uppercase", letterSpacing:"0.08em" };
+      return <ProfilePage user={user} store={store} showToast={showToast} myBills={myBills} totalPaid={totalPaid} balance={balance}/>;
+    }
 
       return (
         <div>
@@ -6228,159 +6471,6 @@ const UserDash = ({ user, store, onLogout }) => {
                   <Icon name="check" size={15} color="#fff"/> Update Password
                 </button>
               </div>
-
-              {/* Account summary strip */}
-              <div style={{ background:"linear-gradient(135deg,#0a2540,#0d3a60)", borderRadius:18, padding:22, color:"#fff" }}>
-                <h3 style={{ margin:"0 0 16px", fontSize:14, opacity:0.8, fontWeight:700 }}>Account Summary</h3>
-                {[
-                  { label:"Total Bills",    value:myBills.length           },
-                  { label:"Total Paid",     value:fmtKES(totalPaid)        },
-                  { label:"Balance Due",    value:fmtKES(balance), red:balance>0 },
-                  { label:"Member Since",   value:user.joinDate             },
-                ].map(s=>(
-                  <div key={s.label} style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:"1px solid rgba(255,255,255,0.08)", fontSize:13 }}>
-                    <span style={{ opacity:0.6 }}>{s.label}</span>
-                    <b style={{ color: s.red?"#fca5a5":"#fff" }}>{s.value}</b>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    // ── PAGE: HELP & SUPPORT ────────────────────────────────────────────────
-    if (page==="support") {
-      const [ticket, setTicket]   = useState({ subject:"", category:"Billing", message:"" });
-      const [submitted, setSubmitted] = useState(false);
-      const [tickets, setTickets] = useState([
-        { id:"t1", subject:"Bill amount seems incorrect", category:"Billing",      date:"2025-04-20", status:"resolved", reply:"Thank you for reaching out. Your bill has been reviewed and is correct based on your meter reading of 1355 m³." },
-        { id:"t2", subject:"Meter not accessible",        category:"Meter Issue",  date:"2025-05-01", status:"open",     reply:""  },
-      ]);
-
-      const submitTicket = () => {
-        if (!ticket.subject||!ticket.message) return;
-        setTickets(t=>[...t, { id:uid(), ...ticket, date:today(), status:"open", reply:"" }]);
-        setSubmitted(true);
-        setTicket({ subject:"", category:"Billing", message:"" });
-        setTimeout(()=>setSubmitted(false), 4000);
-      };
-
-      const faqs = [
-        { q:"How is my bill calculated?",          a:`Your bill = Units consumed × KES ${RATE_PER_UNIT} + KES 200 standing charge. Units = Current reading minus previous reading.` },
-        { q:"When is my payment due?",             a:"Payment is due on the 15th of the following month. Late payments may attract a 10% penalty after a 5-day grace period." },
-        { q:"How do I pay my bill?",               a:"Pay via M-Pesa Paybill, Bank Transfer, Cash at our offices, or through the Pay Now button on your bill." },
-        { q:"What if my meter reading is wrong?",  a:"Contact us immediately via this support page. We will send a technician to verify and re-read the meter at no charge." },
-        { q:"Why is my bill higher than usual?",   a:"Check for leaks in your pipes, running toilets, or garden hoses left on. Compare with your meter reading history in the Usage tab." },
-        { q:"How do I report a faulty meter?",     a:'Select "Meter Issue" in the category and submit a support ticket. We target a 48-hour technician response time.' },
-      ];
-
-      const statusColors = { open:"#f59e0b", resolved:"#059669", closed:"#6b7280" };
-      const statusBgs    = { open:"#fef3c7", resolved:"#d1fae5", closed:"#f3f4f6" };
-
-      return (
-        <div>
-          <h2 style={h2style}>Help & Support</h2>
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))", gap:20 }}>
-
-            {/* Submit ticket */}
-            <div style={{ background:"#fff", borderRadius:18, padding:24, boxShadow:"0 2px 16px rgba(10,37,64,0.07)", border:"1px solid #e8f4fd" }}>
-              <h3 style={{ margin:"0 0 6px", fontSize:16, color:"#0a2540", fontWeight:800 }}>🎫 Submit a Support Ticket</h3>
-              <p style={{ fontSize:13, color:"#6b8fa8", margin:"0 0 18px" }}>We respond within 24 hours on business days.</p>
-
-              {submitted && (
-                <div style={{ background:"#d1fae5", borderRadius:12, padding:"12px 16px", marginBottom:16, display:"flex", alignItems:"center", gap:10, fontSize:14, fontWeight:700, color:"#065f46" }}>
-                  <Icon name="check" size={18} color="#059669"/> Ticket submitted! We'll respond shortly.
-                </div>
-              )}
-
-              <div style={{ marginBottom:14 }}>
-                <label style={{ display:"block", fontSize:11, fontWeight:700, color:"#5b8fa8", marginBottom:5, textTransform:"uppercase", letterSpacing:"0.08em" }}>Category</label>
-                <select value={ticket.category} onChange={e=>setTicket(t=>({...t,category:e.target.value}))}
-                  style={{ width:"100%", padding:"10px 14px", border:"1.5px solid #dde8f0", borderRadius:10, fontSize:14, color:"#0a2540", background:"#f8fbff", outline:"none" }}>
-                  {["Billing","Meter Issue","Payment","Connection","Leak Report","Other"].map(c=><option key={c}>{c}</option>)}
-                </select>
-              </div>
-              <div style={{ marginBottom:14 }}>
-                <label style={{ display:"block", fontSize:11, fontWeight:700, color:"#5b8fa8", marginBottom:5, textTransform:"uppercase", letterSpacing:"0.08em" }}>Subject</label>
-                <input type="text" value={ticket.subject} onChange={e=>setTicket(t=>({...t,subject:e.target.value}))}
-                  placeholder="Brief description of your issue"
-                  style={{ width:"100%", padding:"10px 14px", border:"1.5px solid #dde8f0", borderRadius:10, fontSize:14, color:"#0a2540", background:"#f8fbff", outline:"none", boxSizing:"border-box" }}/>
-              </div>
-              <div style={{ marginBottom:18 }}>
-                <label style={{ display:"block", fontSize:11, fontWeight:700, color:"#5b8fa8", marginBottom:5, textTransform:"uppercase", letterSpacing:"0.08em" }}>Message</label>
-                <textarea value={ticket.message} onChange={e=>setTicket(t=>({...t,message:e.target.value}))}
-                  placeholder="Please describe your issue in detail…" rows={5}
-                  style={{ width:"100%", padding:"10px 14px", border:"1.5px solid #dde8f0", borderRadius:10, fontSize:14, color:"#0a2540", background:"#f8fbff", outline:"none", resize:"vertical", boxSizing:"border-box" }}/>
-              </div>
-              <button onClick={submitTicket} style={{ width:"100%", padding:"12px", background:"linear-gradient(135deg,#0077b6,#00b4d8)", color:"#fff", border:"none", borderRadius:12, fontWeight:700, fontSize:15, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
-                <Icon name="zap" size={16} color="#fff"/> Submit Ticket
-              </button>
-
-              {/* Contact strip */}
-              <div style={{ marginTop:20, background:"#f0f7ff", borderRadius:14, padding:16 }}>
-                <div style={{ fontWeight:700, color:"#0a2540", fontSize:13, marginBottom:10 }}>📞 Direct Contacts</div>
-                {[
-                  { label:"Hotline",  value:"0800 XXX XXX (Free)" },
-                  { label:"WhatsApp", value:"+254 700 XXX XXX"    },
-                  { label:"Email",    value:"support@h2owater.co.ke"},
-                  { label:"Office",   value:"Mon–Fri, 8am–5pm"    },
-                ].map(c=>(
-                  <div key={c.label} style={{ display:"flex", justifyContent:"space-between", fontSize:13, padding:"5px 0", borderBottom:"1px solid #e8f4fd" }}>
-                    <span style={{ color:"#5b8fa8", fontWeight:600 }}>{c.label}</span>
-                    <span style={{ color:"#0a2540", fontWeight:700 }}>{c.value}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Right column: tickets + FAQs */}
-            <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
-
-              {/* My tickets */}
-              <div style={{ background:"#fff", borderRadius:18, padding:24, boxShadow:"0 2px 16px rgba(10,37,64,0.07)", border:"1px solid #e8f4fd" }}>
-                <h3 style={{ margin:"0 0 16px", fontSize:15, color:"#0a2540", fontWeight:800 }}>📋 My Tickets</h3>
-                {tickets.length===0 ? (
-                  <div style={{ textAlign:"center", color:"#94a8b8", padding:24, fontSize:13 }}>No tickets yet.</div>
-                ) : tickets.map(t=>(
-                  <div key={t.id} style={{ marginBottom:14, background:"#f8fbff", borderRadius:14, padding:14, border:"1px solid #e8f4fd" }}>
-                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:8 }}>
-                      <div>
-                        <div style={{ fontWeight:700, color:"#0a2540", fontSize:13 }}>{t.subject}</div>
-                        <div style={{ fontSize:11, color:"#94a8b8", marginTop:2 }}>{t.category} · {t.date}</div>
-                      </div>
-                      <span style={{ background:statusBgs[t.status], color:statusColors[t.status], borderRadius:20, padding:"3px 10px", fontSize:11, fontWeight:700, flexShrink:0 }}>
-                        {t.status.charAt(0).toUpperCase()+t.status.slice(1)}
-                      </span>
-                    </div>
-                    {t.reply && (
-                      <div style={{ background:"#d1fae5", borderRadius:10, padding:"10px 12px", fontSize:12, color:"#065f46", borderLeft:"3px solid #059669" }}>
-                        <b>H2O Support:</b> {t.reply}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-
-              {/* FAQs */}
-              <div style={{ background:"#fff", borderRadius:18, padding:24, boxShadow:"0 2px 16px rgba(10,37,64,0.07)", border:"1px solid #e8f4fd" }}>
-                <h3 style={{ margin:"0 0 16px", fontSize:15, color:"#0a2540", fontWeight:800 }}>❓ Frequently Asked Questions</h3>
-                {faqs.map((f,i)=>(
-                  <details key={i} style={{ marginBottom:10, borderRadius:12, border:"1px solid #e8f4fd", overflow:"hidden" }}>
-                    <summary style={{ padding:"12px 16px", fontWeight:700, fontSize:13, color:"#0a2540", cursor:"pointer", background:"#f8fbff", listStyle:"none", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                      {f.q} <span style={{ color:"#0077b6", fontSize:18, lineHeight:1 }}>+</span>
-                    </summary>
-                    <div style={{ padding:"12px 16px", fontSize:13, color:"#374151", lineHeight:1.6, background:"#fff" }}>{f.a}</div>
-                  </details>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      );
-    }
-  };
 
   return (
     <div style={{ display:"flex", minHeight:"100vh", fontFamily:"'DM Sans',sans-serif", background:"#f4f8fb" }}>
@@ -6466,7 +6556,7 @@ const btnIcon = { background:"#f0f7ff", border:"none", borderRadius:8, width:32,
 // ════════════════════════════════════════════════════════════════════════════
 //  ROOT APP
 // ════════════════════════════════════════════════════════════════════════════
-export default function App() {
+function App() {
   const store = useStore();
   const [session, setSession] = useState(null);
 
@@ -6479,3 +6569,35 @@ export default function App() {
     </>
   );
 }
+
+ReactDOM.createRoot(document.getElementById('root')).render(
+  React.createElement(App)
+);
+
+  </script>
+
+  <script>
+    // Hide loading splash after React mounts
+    (function hideSplash() {
+      var attempts = 0;
+      var timer = setInterval(function() {
+        var root = document.getElementById('root');
+        var loading = document.getElementById('loading');
+        if (!loading) { clearInterval(timer); return; }
+        // Hide once React has rendered something into #root
+        if (root && root.children.length > 0) {
+          loading.style.opacity = '0';
+          setTimeout(function(){ if(loading) loading.remove(); }, 500);
+          clearInterval(timer);
+        }
+        if (++attempts > 40) { // 4s timeout fallback
+          loading.style.opacity = '0';
+          setTimeout(function(){ if(loading) loading.remove(); }, 500);
+          clearInterval(timer);
+        }
+      }, 100);
+    })();
+  </script>
+
+</body>
+</html>
