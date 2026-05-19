@@ -456,8 +456,8 @@ let currentUser=null, loginMode='admin';
 function switchLoginTab(mode){
   loginMode=mode;
   qa('.tab-btn').forEach((b,i)=>b.classList.toggle('active',(mode==='admin')===!i));
-  el('loginUserLabel').textContent=mode==='admin'?'Username':'Meter Number';
-  el('loginUser').placeholder=mode==='admin'?'Enter username':'Enter meter number';
+  el('loginUserLabel').textContent=mode==='admin'?'Username':'Meter No. or Phone Number';
+  el('loginUser').placeholder=mode==='admin'?'Enter username':'e.g. MTR-0100 or 0712345678';
 }
 
 function doLogin(){
@@ -472,9 +472,9 @@ function doLogin(){
     else el('loginErr').textContent='Invalid admin credentials.';
   } else {
     const customers=STORE.get('customers')||[];
-    const found=customers.find(c=>c.meter===user&&c.password===pass&&c.status==='active');
+    const found=customers.find(c=>(c.meter===user||c.phone===user)&&c.password===pass&&c.status==='active');
     if(found){currentUser={...found,role_type:'customer'};launchApp();}
-    else el('loginErr').textContent='Invalid meter number or password.';
+    else el('loginErr').textContent='Invalid meter number, phone number, or password.';
   }
 }
 
@@ -515,6 +515,7 @@ const CUST_NAV=[
   {id:'cust-overview',label:'My Account',icon:'🏠'},
   {id:'cust-bills',label:'My Bills',icon:'🧾'},
   {id:'cust-payments',label:'Payment History',icon:'💳'},
+  {id:'cust-receipts',label:'My Receipts',icon:'🧾'},
   {id:'cust-usage',label:'Usage Analytics',icon:'📈'},
   {id:'cust-meter',label:'My Meter',icon:'🔧'},
   {id:'cust-notifications',label:'Notifications',icon:'🔔'},
@@ -557,6 +558,7 @@ function navigateTo(page){
     payments:'Payment Management',customers:'Customer Management',
     reports:'Reports & Analytics',notifications:'Notifications',settings:'System Settings',
     'cust-overview':'My Account','cust-bills':'My Bills','cust-payments':'Payment History',
+    'cust-receipts':'My Receipts',
     'cust-usage':'Usage Analytics','cust-meter':'My Meter','cust-notifications':'Notifications',
     'cust-profile':'My Profile','cust-support':'Help & Support'
   };
@@ -576,6 +578,7 @@ function navigateTo(page){
     'cust-overview':renderCustOverview,
     'cust-bills':renderCustBills,
     'cust-payments':renderCustPayments,
+    'cust-receipts':renderCustReceipts,
     'cust-usage':renderCustUsage,
     'cust-meter':renderCustMeter,
     'cust-notifications':renderCustNotifications,
@@ -699,13 +702,15 @@ function renderMeters(){
   return `
   <div class="mod-tabs">
     <button class="mod-tab active" onclick="mTab(this,'m-registry')">📋 Registry</button>
-    <button class="mod-tab" onclick="mTab(this,'m-readings')">⚡ Enter Readings</button>
+    <button class="mod-tab" onclick="mTab(this,'m-readings')">⚡ Enter Reading</button>
+    <button class="mod-tab" onclick="mTab(this,'m-bulk')" id="m-bulk-tab">📊 Bulk Readings & Billing</button>
     <button class="mod-tab" onclick="mTab(this,'m-history')">📈 Reading History</button>
     <button class="mod-tab" onclick="mTab(this,'m-faulty')">🔧 Faulty / Issues</button>
   </div>
   <div style="padding:1.5rem;">
     <div class="mod-panel active" id="m-registry">${mRegistry()}</div>
     <div class="mod-panel" id="m-readings">${mReadings()}</div>
+    <div class="mod-panel" id="m-bulk">${mBulkReadings()}</div>
     <div class="mod-panel" id="m-history">${mHistory()}</div>
     <div class="mod-panel" id="m-faulty">${mFaulty()}</div>
   </div>`;
@@ -809,6 +814,309 @@ function saveReading(input,meterId){
   m.lastReadDate=new Date().toISOString().split('T')[0];
   STORE.set('meters',meters);
   toast(`Reading saved for ${m.meterNo}`, 'success');
+}
+
+function mBulkReadings(){
+  const meters=STORE.get('meters')||[];
+  const customers=STORE.get('customers')||[];
+  const readings=STORE.get('readings')||[];
+  const bills=STORE.get('bills')||[];
+  const settings=STORE.get('settings')||{};
+  const rate=settings.rate||150;
+  const standing=settings.standing||200;
+  const today=new Date().toISOString().split('T')[0];
+  const currentPeriod=today.substring(0,7);// YYYY-MM
+
+  // Build row data for each active meter
+  const activeMeters=meters.filter(m=>m.status!=='decommissioned');
+
+  function getEstimate(meterId){
+    // Get last 3 readings for trend
+    const hist=readings.filter(r=>r.meterId===meterId).sort((a,b)=>b.period.localeCompare(a.period)).slice(0,3);
+    if(!hist.length)return null;
+    const avg=Math.round(hist.reduce((s,r)=>s+r.units,0)/hist.length);
+    return avg;
+  }
+
+  function alreadyRead(meterId){
+    return readings.find(r=>r.meterId===meterId&&r.period===currentPeriod);
+  }
+
+  function alreadyBilled(customerId){
+    return bills.find(b=>b.customerId===customerId&&b.period===currentPeriod);
+  }
+
+  const rows=activeMeters.map(m=>{
+    const cust=customers.find(c=>c.id===m.customerId);
+    const est=getEstimate(m.id);
+    const readDone=alreadyRead(m.id);
+    const billDone=cust?alreadyBilled(cust.id):null;
+    const unitsEst=est||0;
+    const totalEst=(unitsEst*rate)+standing;
+    return {m,cust,est,readDone,billDone,unitsEst,totalEst};
+  });
+
+  const periodDisplay=new Date(currentPeriod+'-01').toLocaleDateString('en-KE',{month:'long',year:'numeric'});
+
+  return `
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:1rem;margin-bottom:1.25rem;">
+    <div>
+      <div class="section-title">📊 Bulk Readings & Billing — ${periodDisplay}</div>
+      <p style="font-size:.82rem;color:var(--muted);margin-top:.25rem;">Enter current readings for all meters in one screen. Missing readings show usage estimates from trend. Generate bills directly from this view.</p>
+    </div>
+    <div style="display:flex;gap:.65rem;flex-wrap:wrap;">
+      <button class="btn btn-sm btn-outline" onclick="bulkEstimateAll()">🔮 Estimate All Unread</button>
+      <button class="btn btn-sm btn-outline" onclick="bulkDownloadSheet()">⬇️ Download Sheet (CSV)</button>
+      <button class="btn btn-sm btn-green" onclick="bulkSaveAllReadings()">💾 Save All Readings</button>
+      <button class="btn btn-sm btn-primary" onclick="bulkGenerateAllBills()">⚡ Generate All Bills</button>
+    </div>
+  </div>
+
+  <!-- Summary strip -->
+  <div class="grid g4" style="margin-bottom:1.25rem;">
+    <div class="card" style="padding:.85rem;text-align:center;">
+      <div style="font-size:1.4rem;font-weight:700;color:var(--accent);">${activeMeters.length}</div>
+      <div style="font-size:.75rem;color:var(--muted);">Total Meters</div>
+    </div>
+    <div class="card" style="padding:.85rem;text-align:center;">
+      <div style="font-size:1.4rem;font-weight:700;color:var(--green);">${rows.filter(r=>r.readDone).length}</div>
+      <div style="font-size:.75rem;color:var(--muted);">Readings Done</div>
+    </div>
+    <div class="card" style="padding:.85rem;text-align:center;">
+      <div style="font-size:1.4rem;font-weight:700;color:var(--yellow);">${rows.filter(r=>!r.readDone).length}</div>
+      <div style="font-size:.75rem;color:var(--muted);">Pending Readings</div>
+    </div>
+    <div class="card" style="padding:.85rem;text-align:center;">
+      <div style="font-size:1.4rem;font-weight:700;color:var(--red);">${rows.filter(r=>r.cust&&!r.billDone).length}</div>
+      <div style="font-size:.75rem;color:var(--muted);">Bills Not Generated</div>
+    </div>
+  </div>
+
+  <!-- Main grid table -->
+  <div class="tbl-wrap">
+    <table id="bulkReadTable">
+      <thead>
+        <tr>
+          <th>Meter No.</th>
+          <th>Customer</th>
+          <th>Area</th>
+          <th>Prev. Reading (m³)</th>
+          <th>Curr. Reading (m³)</th>
+          <th>Units Used</th>
+          <th>Estimate</th>
+          <th>Bill Amount</th>
+          <th>Read</th>
+          <th>Billed</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map(({m,cust,est,readDone,billDone,unitsEst,totalEst})=>{
+          const prev=m.lastReading||0;
+          const currVal=readDone?readDone.curr:'';
+          const units=readDone?readDone.units:'';
+          const billAmt=readDone?((readDone.units*rate)+standing):totalEst;
+          const estTag=est!==null?`<span title="Avg of last ${Math.min(3,readings.filter(r=>r.meterId===m.id).length)} readings" style="font-size:.72rem;color:var(--yellow);margin-left:.3rem;">~${est}m³ est.</span>`:'<span style="font-size:.72rem;color:var(--muted);">no history</span>';
+          return `<tr id="bulk-row-${m.id}" data-meterid="${m.id}" data-custid="${cust?cust.id:''}" data-prev="${prev}" data-est="${est||0}">
+            <td style="font-family:var(--mono);color:var(--accent);font-weight:600;">${m.meterNo}</td>
+            <td>${cust?cust.name:'<span style="color:var(--muted)">Unassigned</span>'}</td>
+            <td style="font-size:.82rem;">${m.area||'—'}</td>
+            <td style="font-family:var(--mono);">${prev} m³</td>
+            <td>
+              ${readDone
+                ? `<span style="font-family:var(--mono);color:var(--green);">${readDone.curr} m³</span>`
+                : `<div style="display:flex;align-items:center;gap:.4rem;">
+                    <input type="number" id="curr-${m.id}" placeholder="0" min="${prev}"
+                      style="width:90px;padding:.35rem .5rem;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);"
+                      oninput="bulkCalcRow('${m.id}',${prev},${rate},${standing})">
+                   </div>`
+              }
+            </td>
+            <td id="units-${m.id}" style="font-family:var(--mono);">${units!==''?units+'&nbsp;m³':'<span style="color:var(--muted);">—</span>'}</td>
+            <td>${!readDone?estTag:'<span style="color:var(--muted);font-size:.8rem;">read ✓</span>'}</td>
+            <td id="bilamt-${m.id}" style="font-family:var(--mono);font-weight:600;">${readDone||!est?fmtKES(billAmt):'<span style="color:var(--yellow)">'+fmtKES(billAmt)+'</span>'}</td>
+            <td style="text-align:center;">${readDone?'<span style="color:var(--green);">✅</span>':'<span style="color:var(--muted);">⏳</span>'}</td>
+            <td style="text-align:center;">${billDone?'<span style="color:var(--green);">✅</span>':'<span style="color:var(--red);">❌</span>'}</td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+  </div>
+  <div id="bulk-save-result" style="margin-top:1rem;"></div>`;
+}
+
+// ── BULK READING HELPERS ──
+
+function bulkCalcRow(meterId, prev, rate, standing){
+  const inp=q('#curr-'+meterId);
+  if(!inp)return;
+  const curr=parseFloat(inp.value)||0;
+  const units=Math.max(0,curr-prev);
+  const amt=(units*rate)+standing;
+  const uEl=q('#units-'+meterId);
+  const aEl=q('#bilamt-'+meterId);
+  if(uEl)uEl.innerHTML=curr>prev?`${units}&nbsp;m³`:'<span style="color:var(--red);">Check value</span>';
+  if(aEl)aEl.textContent=curr>prev?fmtKES(amt):'—';
+}
+
+function bulkEstimateAll(){
+  const readings=STORE.get('readings')||[];
+  const today=new Date().toISOString().split('T')[0];
+  const currentPeriod=today.substring(0,7);
+  const rows=qa('#bulkReadTable tbody tr');
+  let filled=0;
+  rows.forEach(row=>{
+    const mid=row.dataset.meterid;
+    const prev=parseFloat(row.dataset.prev)||0;
+    const est=parseFloat(row.dataset.est)||0;
+    const inp=q('#curr-'+mid);
+    if(inp&&!inp.value&&est>0){
+      inp.value=prev+est;
+      const settings=STORE.get('settings')||{};
+      bulkCalcRow(mid,prev,settings.rate||150,settings.standing||200);
+      filled++;
+    }
+  });
+  toast(`Estimated ${filled} unread meters from usage trend`,'success');
+}
+
+function bulkSaveAllReadings(){
+  const readings=STORE.get('readings')||[];
+  const meters=STORE.get('meters')||[];
+  const today=new Date().toISOString().split('T')[0];
+  const currentPeriod=today.substring(0,7);
+  const rows=qa('#bulkReadTable tbody tr');
+  let saved=0,skipped=0;
+  rows.forEach(row=>{
+    const mid=row.dataset.meterid;
+    const cid=row.dataset.custid;
+    const prev=parseFloat(row.dataset.prev)||0;
+    const inp=q('#curr-'+mid);
+    if(!inp)return;// already read
+    const curr=parseFloat(inp.value);
+    if(!curr||curr<=prev){skipped++;return;}
+    const units=curr-prev;
+    // Remove existing for this period if any
+    const filtered=readings.filter(r=>!(r.meterId===mid&&r.period===currentPeriod));
+    filtered.push({id:'r'+uid(),meterId:mid,customerId:cid,prev,curr,units,period:currentPeriod,date:today,source:'bulk'});
+    readings.length=0;filtered.forEach(r=>readings.push(r));
+    // Update meter lastReading
+    const mi=meters.findIndex(m=>m.id===mid);
+    if(mi>-1){meters[mi].lastReading=curr;meters[mi].lastReadDate=today;}
+    saved++;
+  });
+  STORE.set('readings',readings);
+  STORE.set('meters',meters);
+  const res=q('#bulk-save-result');
+  if(res)res.innerHTML=`<div class="badge badge-green">✅ ${saved} readings saved${skipped?' · '+skipped+' skipped (value missing or not greater than previous)':''}</div>`;
+  toast(`${saved} readings saved`,'success');
+  if(saved)setTimeout(()=>navigateTo('meters'),800);
+}
+
+function bulkGenerateAllBills(){
+  const readings=STORE.get('readings')||[];
+  const bills=STORE.get('bills')||[];
+  const customers=STORE.get('customers')||[];
+  const settings=STORE.get('settings')||{};
+  const rate=settings.rate||150;
+  const standing=settings.standing||200;
+  const today=new Date().toISOString().split('T')[0];
+  const currentPeriod=today.substring(0,7);
+  const dueDate=today.substring(0,8)+(settings.dueDay||15);
+
+  // First save any pending readings
+  bulkSaveAllReadings();
+
+  const freshReadings=STORE.get('readings')||[];
+  let generated=0,skipped=0;
+
+  customers.filter(c=>c.status==='active').forEach(c=>{
+    if(bills.find(b=>b.customerId===c.id&&b.period===currentPeriod)){skipped++;return;}
+    const reading=freshReadings.find(r=>r.customerId===c.id&&r.period===currentPeriod);
+
+    // Use estimated units if no reading
+    const meterList=STORE.get('meters')||[];
+    const meter=meterList.find(m=>m.customerId===c.id);
+    let units=0;
+    if(reading){
+      units=reading.units;
+    } else if(meter){
+      // estimate from trend
+      const hist=freshReadings.filter(r=>r.meterId===meter.id).sort((a,b)=>b.period.localeCompare(a.period)).slice(0,3);
+      if(hist.length)units=Math.round(hist.reduce((s,r)=>s+r.units,0)/hist.length);
+    }
+
+    const water=units*rate;
+    const prevBills=bills.filter(b=>b.customerId===c.id&&b.balance>0);
+    const prevBal=prevBills.reduce((s,b)=>s+b.balance,0);
+    const total=water+standing+prevBal;
+    const invNo='INV-'+String(bills.length+generated+1).padStart(4,'0');
+    bills.push({
+      id:'b'+uid(),customerId:c.id,period:currentPeriod,
+      units,water,standing,prevBal,penalty:0,
+      total,paid:0,balance:total,status:'unpaid',
+      invoiceNo:invNo,dueDate,genDate:today,
+      estimated:!reading
+    });
+    generated++;
+  });
+
+  STORE.set('bills',bills);
+  toast(`${generated} bills generated${skipped?' · '+skipped+' already existed':''}`,'success');
+  openModal('✅ Bulk Billing Complete',`
+    <div style="text-align:center;padding:1rem;">
+      <div style="font-size:2.5rem;margin-bottom:.75rem;">⚡</div>
+      <p style="font-weight:700;font-size:1.05rem;">${generated} bills generated for ${currentPeriod.replace('-','/')}</p>
+      ${skipped?`<p style="font-size:.85rem;color:var(--muted);margin-top:.5rem;">${skipped} customers already had bills this period.</p>`:''}
+      <p style="font-size:.82rem;color:var(--yellow);margin-top:.75rem;">⚠️ Bills for customers without a current reading used estimated units from usage trend.</p>
+    </div>`,
+    `<button class="btn btn-outline btn-sm" onclick="closeModal(true)">Close</button>
+     <button class="btn btn-primary btn-sm" onclick="closeModal(true);navigateTo('billing')">View All Invoices →</button>`
+  );
+}
+
+function bulkDownloadSheet(){
+  const readings=STORE.get('readings')||[];
+  const meters=STORE.get('meters')||[];
+  const customers=STORE.get('customers')||[];
+  const settings=STORE.get('settings')||{};
+  const rate=settings.rate||150;
+  const standing=settings.standing||200;
+  const today=new Date().toISOString().split('T')[0];
+  const currentPeriod=today.substring(0,7);
+
+  const rows=qa('#bulkReadTable tbody tr');
+  const lines=[['Meter No','Serial','Customer','Area','Type','Prev Reading (m³)','Curr Reading (m³)','Units Used','Water Charge (KES)','Standing (KES)','Total Bill (KES)','Period','Date Read','Source','Status']];
+
+  rows.forEach(row=>{
+    const mid=row.dataset.meterid;
+    const cid=row.dataset.custid;
+    const meter=meters.find(m=>m.id===mid)||{};
+    const cust=customers.find(c=>c.id===cid)||{};
+    const reading=readings.find(r=>r.meterId===mid&&r.period===currentPeriod);
+    const inp=q('#curr-'+mid);
+    const prev=parseFloat(row.dataset.prev)||0;
+    const curr=reading?reading.curr:(inp?parseFloat(inp.value)||'':'' );
+    const units=reading?reading.units:(curr&&curr>prev?curr-prev:'');
+    const water=units?(units*rate):'';
+    const total=units?(water+standing):'';
+    lines.push([
+      meter.meterNo||'',meter.serial||'',cust.name||'Unassigned',meter.area||'',meter.type||'',
+      prev,curr,units,water,standing,total,currentPeriod,
+      reading?reading.date:today,
+      reading?(reading.source||'manual'):'pending',
+      reading?'Read':'Pending'
+    ]);
+  });
+
+  const csv=lines.map(r=>r.map(v=>JSON.stringify(v===undefined?'':v)).join(',')).join('\n');
+  const blob=new Blob([csv],{type:'text/csv'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download=`Meter_Readings_${currentPeriod}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('Reading sheet downloaded','success');
 }
 
 function mHistory(){
@@ -1312,12 +1620,14 @@ function renderPayments(){
   <div class="mod-tabs">
     <button class="mod-tab active" onclick="mTab(this,'pay-record')">💳 Record Payment</button>
     <button class="mod-tab" onclick="mTab(this,'pay-ledger')">📒 Payment Ledger</button>
+    <button class="mod-tab" onclick="mTab(this,'pay-receipts')">🧾 Receipts</button>
     <button class="mod-tab" onclick="mTab(this,'pay-statement')">📋 Statements</button>
     <button class="mod-tab" onclick="mTab(this,'pay-summary')">📊 Revenue Summary</button>
   </div>
   <div style="padding:1.5rem;">
     <div class="mod-panel active" id="pay-record">${payRecord()}</div>
     <div class="mod-panel" id="pay-ledger">${payLedger()}</div>
+    <div class="mod-panel" id="pay-receipts">${payReceipts()}</div>
     <div class="mod-panel" id="pay-statement">${payStatement()}</div>
     <div class="mod-panel" id="pay-summary">${paySummary()}</div>
   </div>`;
@@ -1439,56 +1749,234 @@ function submitPayment(){
   STORE.set('bills',bills);
   const ref=el('pay-ref')?.value||'PMT'+Math.random().toString().slice(2,8).toUpperCase();
   const payments=STORE.get('payments')||[];
+  const payDate=new Date().toISOString().split('T')[0];
+  const receiptNo='RCT-'+String(payments.length+1).padStart(4,'0');
+  const payId='p'+uid();
   payments.push({
-    id:'p'+uid(),customerId:custId,billId,amount,method,reference:ref,
-    date:new Date().toISOString().split('T')[0],note:el('pay-note')?.value||''
+    id:payId,customerId:custId,billId,amount,method,reference:ref,
+    date:payDate,note:el('pay-note')?.value||'',
+    receiptNo,approved:true,approvedBy:currentUser?.name||'Admin'
   });
   STORE.set('payments',payments);
   const receipt=el('pay-receipt');
   if(receipt){
     receipt.style.display='block';
-    receipt.innerHTML=`<div style="background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.3);border-radius:10px;padding:1rem;">
-      <p style="color:var(--green);font-weight:700;font-size:1rem;">✅ Payment Posted Successfully</p>
+    receipt.innerHTML=`<div style="background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.3);border-radius:10px;padding:1.25rem;">
+      <p style="color:var(--green);font-weight:700;font-size:1rem;">✅ Payment Posted & Approved</p>
       <p style="font-size:.85rem;margin-top:.4rem;">Amount: <strong>${fmtKES(amount)}</strong> · Method: ${method}</p>
-      <p style="font-size:.85rem;">Reference: <strong style="font-family:var(--mono);">${ref}</strong></p>
+      <p style="font-size:.85rem;">Reference: <strong style="font-family:var(--mono);">${ref}</strong> · Receipt No: <strong style="font-family:var(--mono);">${receiptNo}</strong></p>
+      <div style="margin-top:1rem;display:flex;gap:.65rem;flex-wrap:wrap;">
+        <button class="btn btn-sm btn-primary" onclick="printReceipt('${payId}')">🖨️ Print Receipt</button>
+        <button class="btn btn-sm btn-outline" onclick="downloadReceiptPDF('${payId}')">⬇️ Download Receipt</button>
+      </div>
     </div>`;
   }
-  // Add notification
   const customers=STORE.get('customers')||[];
   const c=customers.find(x=>x.id===custId);
   const notifs=STORE.get('notifications')||[];
-  notifs.unshift({id:'n'+uid(),type:'payment',to:custId,title:`Payment Received – ${c?.name}`,msg:`${fmtKES(amount)} received via ${method}. Reference: ${ref}.`,date:new Date().toISOString().split('T')[0],read:false,priority:'normal'});
+  notifs.unshift({id:'n'+uid(),type:'payment',to:custId,title:`Payment Approved – ${c?.name}`,msg:`${fmtKES(amount)} received via ${method}. Receipt No: ${receiptNo}. Reference: ${ref}.`,date:payDate,read:false,priority:'normal'});
   STORE.set('notifications',notifs);
-  toast(`Payment of ${fmtKES(amount)} posted!`,'success');
+  toast(`Payment of ${fmtKES(amount)} posted! Receipt: ${receiptNo}`,'success');
 }
 
 function payLedger(){
   const payments=STORE.get('payments')||[];
   const customers=STORE.get('customers')||[];
+  const bills=STORE.get('bills')||[];
   const total=payments.reduce((s,p)=>s+p.amount,0);
-  const methodColors={MPesa:'var(--green)','Bank Transfer':'var(--accent)',Cash:'var(--yellow)',Cheque:'var(--purple)',PesaLink:'var(--accent)'};
   return `
   <div class="stats-row" style="margin-bottom:1rem;">
     <div class="stat-chip"><span>Transactions: </span><strong>${payments.length}</strong></div>
     <div class="stat-chip"><span>Total Collected: </span><strong style="color:var(--green);">${fmtKES(total)}</strong></div>
   </div>
   <div class="tbl-wrap"><table>
-    <thead><tr><th>Date</th><th>Customer</th><th>Invoice</th><th>Amount</th><th>Method</th><th>Reference</th><th>Note</th></tr></thead>
+    <thead><tr><th>Date</th><th>Receipt No.</th><th>Customer</th><th>Invoice</th><th>Amount</th><th>Method</th><th>Reference</th><th>Note</th><th>Receipt</th></tr></thead>
     <tbody>
     ${payments.sort((a,b)=>b.date.localeCompare(a.date)).map(p=>{
       const c=customers.find(x=>x.id===p.customerId);
+      const b=bills.find(x=>x.id===p.billId);
+      const rNo=p.receiptNo||'—';
       return `<tr>
         <td style="font-size:.82rem;">${fmtDate(p.date)}</td>
+        <td style="font-family:var(--mono);font-size:.8rem;color:var(--accent);">${rNo}</td>
         <td>${c?c.name:'—'}</td>
-        <td style="font-family:var(--mono);font-size:.78rem;">${p.billId}</td>
+        <td style="font-family:var(--mono);font-size:.78rem;">${b?b.invoiceNo:p.billId}</td>
         <td style="font-weight:700;color:var(--green);">${fmtKES(p.amount)}</td>
         <td><span class="badge badge-green">${p.method}</span></td>
         <td style="font-family:var(--mono);font-size:.8rem;">${p.reference}</td>
         <td style="font-size:.8rem;color:var(--muted);">${p.note||'—'}</td>
+        <td>
+          <button class="btn-icon" title="Print Receipt" onclick="printReceipt('${p.id}')">🖨️</button>
+          <button class="btn-icon" title="Download Receipt" onclick="downloadReceiptPDF('${p.id}')">⬇️</button>
+        </td>
       </tr>`;
     }).join('')}
     </tbody>
   </table></div>`;
+}
+
+function payReceipts(){
+  const payments=STORE.get('payments')||[];
+  const customers=STORE.get('customers')||[];
+  const bills=STORE.get('bills')||[];
+  const settings=STORE.get('settings')||{};
+  const sorted=payments.slice().sort((a,b)=>b.date.localeCompare(a.date));
+  if(!sorted.length)return `<div class="empty"><span class="icon">🧾</span><p>No payments recorded yet</p></div>`;
+  return `
+  <div class="section-head" style="margin-bottom:1.25rem;">
+    <div class="section-title">Payment Receipts (${sorted.length})</div>
+    <div style="display:flex;gap:.65rem;">
+      <input placeholder="Search customer or receipt no…" oninput="filterReceipts(this.value)"
+        style="padding:.4rem .75rem;background:var(--card2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--font);font-size:.85rem;width:240px;">
+    </div>
+  </div>
+  <div id="receipt-grid" class="grid g2">
+    ${sorted.map(p=>{
+      const c=customers.find(x=>x.id===p.customerId)||{};
+      const b=bills.find(x=>x.id===p.billId)||{};
+      const rNo=p.receiptNo||('RCT-'+p.id.slice(-4).toUpperCase());
+      return `<div class="card receipt-card" data-search="${(c.name||'').toLowerCase()} ${rNo.toLowerCase()}">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:.75rem;">
+          <div>
+            <div style="font-family:var(--mono);font-size:.78rem;color:var(--accent);font-weight:700;">${rNo}</div>
+            <div style="font-weight:700;font-size:.95rem;margin-top:.15rem;">${c.name||'Unknown'}</div>
+            <div style="font-size:.78rem;color:var(--muted);">${c.meter||''} · ${c.area||''}</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:1.2rem;font-weight:700;color:var(--green);">${fmtKES(p.amount)}</div>
+            <span class="badge badge-green" style="font-size:.7rem;">${p.method}</span>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.4rem .75rem;font-size:.78rem;color:var(--muted);margin-bottom:.85rem;">
+          <div><span>Invoice:</span> <strong style="color:var(--text);">${b.invoiceNo||p.billId}</strong></div>
+          <div><span>Period:</span> <strong style="color:var(--text);">${b.period?fmtPeriod(b.period):'—'}</strong></div>
+          <div><span>Reference:</span> <strong style="color:var(--text);font-family:var(--mono);">${p.reference}</strong></div>
+          <div><span>Date:</span> <strong style="color:var(--text);">${fmtDate(p.date)}</strong></div>
+          <div><span>Approved by:</span> <strong style="color:var(--text);">${p.approvedBy||'Admin'}</strong></div>
+          <div><span>Status:</span> <span class="badge badge-green">Approved ✓</span></div>
+        </div>
+        <div style="display:flex;gap:.5rem;">
+          <button class="btn btn-sm btn-outline" style="flex:1;" onclick="printReceipt('${p.id}')">🖨️ Print</button>
+          <button class="btn btn-sm btn-primary" style="flex:1;" onclick="downloadReceiptPDF('${p.id}')">⬇️ Download</button>
+        </div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+function filterReceipts(val){
+  const v=val.toLowerCase();
+  qa('.receipt-card').forEach(card=>{
+    card.style.display=card.dataset.search.includes(v)?'':'none';
+  });
+}
+
+// ── RECEIPT ENGINE ──
+function buildReceiptHTML(payId,mode){
+  const payments=STORE.get('payments')||[];
+  const customers=STORE.get('customers')||[];
+  const bills=STORE.get('bills')||[];
+  const settings=STORE.get('settings')||{};
+  const p=payments.find(x=>x.id===payId);
+  if(!p)return null;
+  const c=customers.find(x=>x.id===p.customerId)||{};
+  const b=bills.find(x=>x.id===p.billId)||{};
+  const rNo=p.receiptNo||('RCT-'+p.id.slice(-4).toUpperCase());
+  const company=settings.company||'H2O Water Limited';
+  const tagline=settings.tagline||'Clean Water for Every Home';
+  const address=settings.address||'Nairobi, Kenya';
+  const phone=settings.phone||'';
+  const email=settings.email||'';
+  const paybill=settings.paybill||'';
+  const bg=mode==='print'?'#fff':'#0f1117';
+  const text=mode==='print'?'#111':'#e2e8f0';
+  const muted=mode==='print'?'#555':'#94a3b8';
+  const accent=mode==='print'?'#0070f3':'#00c2ff';
+  const green=mode==='print'?'#16a34a':'#22c55e';
+  const border=mode==='print'?'#e5e7eb':'#1e2535';
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8">
+  <title>Receipt ${rNo}</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box;}
+    body{font-family:'Segoe UI',Arial,sans-serif;background:${bg};color:${text};padding:2rem;}
+    .receipt{max-width:480px;margin:0 auto;background:${mode==='print'?'#fff':'#161b27'};border:1px solid ${border};border-radius:12px;overflow:hidden;}
+    .header{background:${mode==='print'?'#0070f3':'#00c2ff'};color:#fff;padding:1.5rem;text-align:center;}
+    .header h1{font-size:1.3rem;font-weight:800;letter-spacing:.02em;}
+    .header p{font-size:.8rem;opacity:.85;margin-top:.2rem;}
+    .header .rno{display:inline-block;background:rgba(255,255,255,.2);padding:.25rem .75rem;border-radius:20px;font-size:.78rem;margin-top:.6rem;font-weight:700;letter-spacing:.05em;}
+    .stamp{text-align:center;padding:1.25rem;border-bottom:1px dashed ${border};}
+    .stamp .amount{font-size:2.2rem;font-weight:800;color:${green};}
+    .stamp .approved{font-size:.8rem;color:${green};margin-top:.2rem;font-weight:600;}
+    .body{padding:1.25rem;}
+    .row{display:flex;justify-content:space-between;align-items:center;padding:.45rem 0;border-bottom:1px solid ${border};font-size:.84rem;}
+    .row:last-child{border-bottom:none;}
+    .row .lbl{color:${muted};}
+    .row .val{font-weight:600;text-align:right;max-width:60%;}
+    .row .val.mono{font-family:monospace;font-size:.82rem;color:${accent};}
+    .footer{background:${mode==='print'?'#f8fafc':'rgba(0,194,255,.05)'};padding:1rem 1.25rem;text-align:center;border-top:1px dashed ${border};}
+    .footer p{font-size:.75rem;color:${muted};line-height:1.6;}
+    .footer .logo{font-weight:800;color:${accent};font-size:.9rem;}
+    .qr-note{font-size:.72rem;color:${muted};margin-top:.4rem;}
+    @media print{body{padding:0;}@page{margin:.5cm;}}
+  </style>
+  </head><body>
+  <div class="receipt">
+    <div class="header">
+      <h1>${company}</h1>
+      <p>${tagline}</p>
+      <div class="rno">RECEIPT # ${rNo}</div>
+    </div>
+    <div class="stamp">
+      <div class="amount">${fmtKES(p.amount)}</div>
+      <div class="approved">✅ Payment Approved & Confirmed</div>
+    </div>
+    <div class="body">
+      <div class="row"><span class="lbl">Customer Name</span><span class="val">${c.name||'—'}</span></div>
+      <div class="row"><span class="lbl">Meter Number</span><span class="val mono">${c.meter||'—'}</span></div>
+      <div class="row"><span class="lbl">Area / Zone</span><span class="val">${c.area||'—'}</span></div>
+      <div class="row"><span class="lbl">Invoice No.</span><span class="val mono">${b.invoiceNo||p.billId}</span></div>
+      <div class="row"><span class="lbl">Billing Period</span><span class="val">${b.period?fmtPeriod(b.period):'—'}</span></div>
+      <div class="row"><span class="lbl">Payment Date</span><span class="val">${fmtDate(p.date)}</span></div>
+      <div class="row"><span class="lbl">Payment Method</span><span class="val">${p.method}</span></div>
+      <div class="row"><span class="lbl">Transaction Ref.</span><span class="val mono">${p.reference}</span></div>
+      <div class="row"><span class="lbl">Amount Paid</span><span class="val" style="color:${green};font-size:1rem;">${fmtKES(p.amount)}</span></div>
+      <div class="row"><span class="lbl">Bill Balance After</span><span class="val">${fmtKES(Math.max(0,(b.total||0)-((b.paid||0))))}</span></div>
+      <div class="row"><span class="lbl">Approved By</span><span class="val">${p.approvedBy||'Admin'}</span></div>
+      ${p.note?`<div class="row"><span class="lbl">Note</span><span class="val">${p.note}</span></div>`:''}
+    </div>
+    <div class="footer">
+      <div class="logo">${company}</div>
+      <p>${address}${phone?' · '+phone:''}</p>
+      ${email?`<p>${email}</p>`:''}
+      ${paybill?`<p>M-Pesa Paybill: <strong>${paybill}</strong></p>`:''}
+      <p class="qr-note">Thank you for your payment. Please retain this receipt for your records.<br>Generated: ${new Date().toLocaleString('en-KE')}</p>
+    </div>
+  </div>
+  </body></html>`;
+}
+
+function printReceipt(payId){
+  const html=buildReceiptHTML(payId,'print');
+  if(!html){toast('Payment not found','error');return;}
+  const w=window.open('','_blank','width=560,height=700');
+  w.document.write(html);
+  w.document.close();
+  w.onload=()=>{w.print();};
+}
+
+function downloadReceiptPDF(payId){
+  const html=buildReceiptHTML(payId,'dark');
+  if(!html){toast('Payment not found','error');return;}
+  const payments=STORE.get('payments')||[];
+  const p=payments.find(x=>x.id===payId);
+  const rNo=p?.receiptNo||payId;
+  const blob=new Blob([html],{type:'text/html'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;a.download=`Receipt_${rNo}.html`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast(`Receipt ${rNo} downloaded`,'success');
 }
 
 function payStatement(){
@@ -2910,6 +3398,52 @@ function renderCustPayments(){
     </tr>`).join('')}
     </tbody>
   </table></div>`:`<div class="empty"><span class="icon">💳</span><p>No payments recorded yet</p></div>`}`;
+}
+
+function renderCustReceipts(){
+  const payments=STORE.get('payments')||[];
+  const bills=STORE.get('bills')||[];
+  const myPayments=payments.filter(p=>p.customerId===currentUser.id&&p.approved!==false)
+    .sort((a,b)=>b.date.localeCompare(a.date));
+  if(!myPayments.length)return `
+    <div class="empty">
+      <span class="icon">🧾</span>
+      <p>No approved receipts yet</p>
+      <p style="font-size:.82rem;color:var(--muted);margin-top:.5rem;">Your receipts will appear here once payments are approved by admin.</p>
+    </div>`;
+  return `
+  <div class="section-head" style="margin-bottom:1.25rem;">
+    <div class="section-title">My Receipts (${myPayments.length})</div>
+    <div style="font-size:.82rem;color:var(--muted);">Official payment receipts from H2O Water Limited</div>
+  </div>
+  <div class="grid g2">
+    ${myPayments.map(p=>{
+      const b=bills.find(x=>x.id===p.billId)||{};
+      const rNo=p.receiptNo||('RCT-'+p.id.slice(-4).toUpperCase());
+      return `<div class="card" style="border-left:3px solid var(--green);">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:.75rem;">
+          <div>
+            <div style="font-family:var(--mono);font-size:.78rem;color:var(--accent);font-weight:700;">${rNo}</div>
+            <div style="font-size:.78rem;color:var(--muted);margin-top:.15rem;">${fmtDate(p.date)}</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:1.25rem;font-weight:800;color:var(--green);">${fmtKES(p.amount)}</div>
+            <span class="badge badge-green" style="font-size:.7rem;">✓ Approved</span>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.35rem .75rem;font-size:.78rem;color:var(--muted);margin-bottom:.85rem;">
+          <div>Invoice: <strong style="color:var(--text);">${b.invoiceNo||'—'}</strong></div>
+          <div>Period: <strong style="color:var(--text);">${b.period?fmtPeriod(b.period):'—'}</strong></div>
+          <div>Method: <strong style="color:var(--text);">${p.method}</strong></div>
+          <div>Ref: <strong style="color:var(--text);font-family:var(--mono);">${p.reference}</strong></div>
+        </div>
+        <div style="display:flex;gap:.5rem;">
+          <button class="btn btn-sm btn-outline" style="flex:1;" onclick="printReceipt('${p.id}')">🖨️ Print</button>
+          <button class="btn btn-sm btn-primary" style="flex:1;" onclick="downloadReceiptPDF('${p.id}')">⬇️ Download</button>
+        </div>
+      </div>`;
+    }).join('')}
+  </div>`;
 }
 
 function renderCustUsage(){
