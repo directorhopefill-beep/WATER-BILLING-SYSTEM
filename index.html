@@ -1051,12 +1051,16 @@ function bulkGenerateAllBills(){
     const water=units*rate;
     const prevBills=bills.filter(b=>b.customerId===c.id&&b.balance>0);
     const prevBal=prevBills.reduce((s,b)=>s+b.balance,0);
-    const total=water+standing+prevBal;
+    const grossTotal=water+standing+prevBal;
+    const {creditUsed,creditRemaining,netTotal,netBalance}=applyCredit(c,grossTotal);
+    if(creditUsed>0){c.credit=creditRemaining;}
     const invNo='INV-'+String(bills.length+generated+1).padStart(4,'0');
     bills.push({
       id:'b'+uid(),customerId:c.id,period:currentPeriod,
       units,water,standing,prevBal,penalty:0,
-      total,paid:0,balance:total,status:'unpaid',
+      creditApplied:creditUsed,rate,
+      grossTotal,total:netTotal,paid:0,balance:netBalance,
+      status:netBalance<=0?'paid':'unpaid',
       invoiceNo:invNo,dueDate,genDate:today,
       estimated:!reading
     });
@@ -1064,6 +1068,7 @@ function bulkGenerateAllBills(){
   });
 
   STORE.set('bills',bills);
+  STORE.set('customers',STORE.get('customers')||[]);// flush credit deductions already applied to in-memory objects
   toast(`${generated} bills generated${skipped?' · '+skipped+' already existed':''}`,'success');
   openModal('✅ Bulk Billing Complete',`
     <div style="text-align:center;padding:1rem;">
@@ -1389,6 +1394,15 @@ function bilCalcPreview(){
     </div>`;
 }
 
+// ── CREDIT HELPER ──
+function applyCredit(customer, grossTotal){
+  const credit=customer.credit||0;
+  const creditUsed=Math.min(credit, grossTotal);
+  const creditRemaining=Math.round((credit-creditUsed)*100)/100;
+  const netTotal=Math.round((grossTotal-creditUsed)*100)/100;
+  return {creditUsed:Math.round(creditUsed*100)/100, creditRemaining, netTotal, netBalance:netTotal};
+}
+
 function generateSingleBill(){
   const custId=q('#bil-cust')?.value;
   const period=q('#bil-period')?.value;
@@ -1404,15 +1418,19 @@ function generateSingleBill(){
   const units=curr-prev;
   const water=units*rate;
   const vatAmt=vat?Math.round(water*vatRate/100):0;
-  const total=water+vatAmt+standing;
+  const grossTotal=water+vatAmt+standing;
   const customers=STORE.get('customers')||[];
   const c=customers.find(x=>x.id===custId);
+  const {creditUsed,creditRemaining,netTotal,netBalance}=applyCredit(c||{},grossTotal);
+  if(c&&creditUsed>0){c.credit=creditRemaining;STORE.set('customers',customers);}
   const invoiceNo=`INV-${String(bills.length+1).padStart(4,'0')}`;
   const today=new Date().toISOString().split('T')[0];
   bills.push({
-    id:'b'+uid(),customerId:custId,period,units,water,vatAmt,standing,prevBal:0,penalty:0,
+    id:'b'+uid(),customerId:custId,period,units,water,vatAmt,standing,
+    prevBal:0,penalty:0,creditApplied:creditUsed,
     prevReading:prev,currReading:curr,rate,
-    total,paid:0,balance:total,status:'unpaid',invoiceNo,
+    grossTotal,total:netTotal,paid:0,balance:netBalance,
+    status:netBalance<=0?'paid':'unpaid',invoiceNo,
     dueDate:period+'-15',genDate:today
   });
   STORE.set('bills',bills);
@@ -1426,7 +1444,8 @@ function generateSingleBill(){
     meter.lastReading=curr;meter.lastReadDate=today;
     STORE.set('meters',meters);
   }
-  toast(`Bill generated for ${c?.name} – ${fmtKES(total)}`,'success');
+  const msg=creditUsed>0?`Bill generated for ${c?.name}. Credit of ${fmtKES(creditUsed)} applied. Net payable: ${fmtKES(netTotal)}`:`Bill generated for ${c?.name} – ${fmtKES(netTotal)}`;
+  toast(msg,'success');
   navigateTo('billing');
 }
 
@@ -1456,18 +1475,22 @@ function batchGenerate(){
     const units=reading?reading.units:0;
     const water=units*rate;
     const vatAmt=vat?Math.round(water*vatRate/100):0;
-    const total=water+vatAmt+standing;
+    const grossTotal=water+vatAmt+standing;
+    const {creditUsed,creditRemaining,netTotal,netBalance}=applyCredit(c,grossTotal);
+    if(creditUsed>0){c.credit=creditRemaining;}
     bills.push({
       id:'b'+uid(),customerId:c.id,period,units,water,vatAmt,standing,prevBal:0,penalty:0,
-      prevReading:prev,currReading:curr,rate,
-      total,paid:0,balance:total,status:'unpaid',
+      creditApplied:creditUsed,prevReading:prev,currReading:curr,rate,
+      grossTotal,total:netTotal,paid:0,balance:netBalance,
+      status:netBalance<=0?'paid':'unpaid',
       invoiceNo:`INV-${String(bills.length+generated+1).padStart(4,'0')}`,
       dueDate:period+'-15',genDate:today
     });
     generated++;
-    logHtml+=`<div style="font-size:.82rem;color:var(--green);padding:.3rem 0;">✅ ${c.name} – ${fmtKES(total)}</div>`;
+    logHtml+=`<div style="font-size:.82rem;color:var(--green);padding:.3rem 0;">✅ ${c.name} – ${fmtKES(netTotal)}${creditUsed>0?' <span style="color:var(--accent);">(Credit −'+fmtKES(creditUsed)+')</span>':''}</div>`;
   });
   STORE.set('bills',bills);
+  STORE.set('customers',customers);// save credit deductions
   if(log)log.innerHTML=`<div style="padding:.75rem;background:var(--bg);border-radius:8px;"><p style="font-weight:600;margin-bottom:.5rem;color:var(--accent);">${generated} bills generated</p>${logHtml}</div>`;
   toast(`${generated} bills generated for ${period}`,'success');
 }
@@ -1531,9 +1554,15 @@ function viewInvoiceModal(billId){
       <div style="border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;margin-bottom:1rem;">
         <div style="display:flex;justify-content:space-between;padding:.6rem 1rem;border-bottom:1px solid #e5e7eb;font-size:.88rem;"><span>Period</span><strong>${fmtPeriod(b?.period)}</strong></div>
         <div style="display:flex;justify-content:space-between;padding:.6rem 1rem;border-bottom:1px solid #e5e7eb;font-size:.88rem;"><span>Units Consumed</span><strong>${b?.units} m³</strong></div>
+        ${b?.prevReading!==undefined?`<div style="display:flex;justify-content:space-between;padding:.6rem 1rem;border-bottom:1px solid #e5e7eb;font-size:.88rem;color:#6b7280;"><span>Previous Reading</span><strong>${b.prevReading} m³</strong></div>`:''}
+        ${b?.currReading!==undefined?`<div style="display:flex;justify-content:space-between;padding:.6rem 1rem;border-bottom:1px solid #e5e7eb;font-size:.88rem;color:#6b7280;"><span>Current Reading</span><strong>${b.currReading} m³</strong></div>`:''}
         <div style="display:flex;justify-content:space-between;padding:.6rem 1rem;border-bottom:1px solid #e5e7eb;font-size:.88rem;"><span>Water Charge (${b?.units} m³ × KES ${b?.rate||(STORE.get('settings')||{}).rate||150}/m³)</span><strong>${fmtKES(b?.water)}</strong></div>
         <div style="display:flex;justify-content:space-between;padding:.6rem 1rem;border-bottom:1px solid #e5e7eb;font-size:.88rem;"><span>Standing Charge</span><strong>${fmtKES(b?.standing)}</strong></div>
+        ${b?.vatAmt?`<div style="display:flex;justify-content:space-between;padding:.6rem 1rem;border-bottom:1px solid #e5e7eb;font-size:.88rem;"><span>VAT</span><strong>${fmtKES(b.vatAmt)}</strong></div>`:''}
+        ${b?.prevBal?`<div style="display:flex;justify-content:space-between;padding:.6rem 1rem;border-bottom:1px solid #e5e7eb;font-size:.88rem;color:#ef4444;"><span>Previous Balance</span><strong>${fmtKES(b.prevBal)}</strong></div>`:''}
         ${b?.penalty?`<div style="display:flex;justify-content:space-between;padding:.6rem 1rem;border-bottom:1px solid #e5e7eb;font-size:.88rem;color:#ef4444;"><span>Late Penalty</span><strong>${fmtKES(b.penalty)}</strong></div>`:''}
+        ${b?.grossTotal&&b?.creditApplied?`<div style="display:flex;justify-content:space-between;padding:.6rem 1rem;border-bottom:1px solid #e5e7eb;font-size:.88rem;color:#6b7280;"><span>Gross Total</span><strong>${fmtKES(b.grossTotal)}</strong></div>`:''}
+        ${b?.creditApplied?`<div style="display:flex;justify-content:space-between;padding:.6rem 1rem;border-bottom:1px solid #e5e7eb;font-size:.88rem;color:#0ea5e9;"><span>Credit Applied</span><strong>− ${fmtKES(b.creditApplied)}</strong></div>`:''}
         <div style="display:flex;justify-content:space-between;padding:.75rem 1rem;font-weight:700;font-size:1rem;color:#1e40af;background:#eff6ff;"><span>TOTAL DUE</span><strong>${fmtKES(b?.total)}</strong></div>
       </div>
       <div style="background:#f0fdf4;border-radius:8px;padding:.75rem 1rem;font-size:.85rem;">
@@ -1783,18 +1812,38 @@ function loadBillDetails(){
 }
 
 function calcBalance(){
+  const custId=el('pay-cust')?.value;
   const billId=el('pay-bill')?.value;
   const bills=STORE.get('bills')||[];
+  const customers=STORE.get('customers')||[];
   const b=bills.find(x=>x.id===billId);
+  const c=customers.find(x=>x.id===custId);
   const amount=parseFloat(el('pay-amount')?.value)||0;
   const preview=el('pay-balance-preview');
   if(!b||!preview)return;
-  const newBal=Math.max(0,b.balance-amount);
+  const currentCredit=c?.credit||0;
+  const billBalance=b.balance;
+  const appliedToBill=Math.min(amount,billBalance);
+  const overpaid=Math.max(0,amount-billBalance);
+  const newBal=Math.max(0,billBalance-appliedToBill);
+  const newCredit=currentCredit+overpaid;
   preview.style.display='block';
-  preview.innerHTML=`<div style="background:rgba(0,194,255,.08);border:1px solid rgba(0,194,255,.2);border-radius:8px;padding:.75rem;font-size:.88rem;margin-bottom:.75rem;">
-    Posting <strong style="color:var(--accent);">${fmtKES(amount)}</strong> → Remaining balance: <strong style="color:${newBal?'var(--red)':'var(--green)'};">${fmtKES(newBal)}</strong>
-    ${!newBal?'<span style="color:var(--green);"> ✓ FULLY PAID</span>':''}
-  </div>`;
+  preview.innerHTML=`
+    <div style="background:rgba(0,194,255,.08);border:1px solid rgba(0,194,255,.2);border-radius:8px;padding:.85rem;font-size:.85rem;margin-bottom:.75rem;">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.3rem .75rem;">
+        <div style="color:var(--muted);">Bill Balance</div><div style="font-weight:600;">${fmtKES(billBalance)}</div>
+        <div style="color:var(--muted);">Amount Paying</div><div style="font-weight:600;color:var(--accent);">${fmtKES(amount)}</div>
+        <div style="color:var(--muted);">Applied to Bill</div><div style="font-weight:600;color:var(--green);">${fmtKES(appliedToBill)}</div>
+        <div style="color:var(--muted);">Remaining Balance</div>
+        <div style="font-weight:700;color:${newBal>0?'var(--red)':'var(--green)'};">${fmtKES(newBal)} ${newBal===0?'✓ PAID':''}</div>
+        ${overpaid>0?`
+        <div style="color:var(--muted);">Overpayment / Credit</div><div style="font-weight:700;color:var(--accent);">${fmtKES(overpaid)}</div>
+        <div style="color:var(--muted);">New Credit Balance</div><div style="font-weight:700;color:var(--accent);">${fmtKES(newCredit)}</div>
+        `:''}
+        ${currentCredit>0&&overpaid===0?`<div style="color:var(--muted);">Existing Credit</div><div style="color:var(--accent);">${fmtKES(currentCredit)}</div>`:''}
+      </div>
+      ${overpaid>0?`<div style="margin-top:.6rem;padding-top:.6rem;border-top:1px solid rgba(0,194,255,.2);font-size:.78rem;color:var(--accent);">💡 Overpayment of ${fmtKES(overpaid)} will be saved as credit and auto-deducted from next bill.</div>`:''}
+    </div>`;
 }
 
 function submitPayment(){
@@ -1806,40 +1855,84 @@ function submitPayment(){
   const bills=STORE.get('bills')||[];
   const b=bills.find(x=>x.id===billId);
   if(!b){toast('Bill not found','error');return;}
-  if(amount>b.balance){toast('Amount exceeds balance due','error');return;}
-  b.paid+=amount;b.balance-=amount;
+  if(amount<=0){toast('Enter a valid amount','error');return;}
+
+  const customers=STORE.get('customers')||[];
+  const c=customers.find(x=>x.id===custId);
+  if(!c){toast('Customer not found','error');return;}
+
+  // --- Overpayment logic ---
+  const prevCredit=c.credit||0;
+  const billBalance=b.balance;
+  const totalAvailable=amount; // what the customer is paying now
+  let appliedToBill=Math.min(amount,billBalance);
+  let overpaid=Math.max(0,amount-billBalance);
+
+  b.paid+=appliedToBill;
+  b.balance=Math.max(0,b.balance-appliedToBill);
   if(b.balance<=0){b.balance=0;b.status='paid';}
   STORE.set('bills',bills);
+
+  // Store new credit balance on customer
+  const newCredit=prevCredit+overpaid;
+  c.credit=Math.round(newCredit*100)/100;
+  STORE.set('customers',customers);
+
   const ref=el('pay-ref')?.value||'PMT'+Math.random().toString().slice(2,8).toUpperCase();
   const payments=STORE.get('payments')||[];
   const payDate=new Date().toISOString().split('T')[0];
   const receiptNo='RCT-'+String(payments.length+1).padStart(4,'0');
   const payId='p'+uid();
   payments.push({
-    id:payId,customerId:custId,billId,amount,method,reference:ref,
+    id:payId,customerId:custId,billId,amount,
+    appliedToBill,overpaid,creditAfter:newCredit,
+    method,reference:ref,
     date:payDate,note:el('pay-note')?.value||'',
     receiptNo,approved:true,approvedBy:currentUser?.name||'Admin'
   });
   STORE.set('payments',payments);
+
+  // Notification message
+  let notifMsg=`${fmtKES(amount)} received via ${method}. Receipt No: ${receiptNo}.`;
+  if(overpaid>0) notifMsg+=` Overpayment of ${fmtKES(overpaid)} credited to account.`;
+
+  const notifs=STORE.get('notifications')||[];
+  notifs.unshift({
+    id:'n'+uid(),type:'payment',to:custId,
+    title:`Payment Approved – ${c?.name}`,
+    msg:notifMsg,date:payDate,read:false,priority:'normal'
+  });
+  STORE.set('notifications',notifs);
+
+  // Build receipt panel
   const receipt=el('pay-receipt');
   if(receipt){
     receipt.style.display='block';
-    receipt.innerHTML=`<div style="background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.3);border-radius:10px;padding:1.25rem;">
+    receipt.innerHTML=`
+    <div style="background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.3);border-radius:10px;padding:1.25rem;">
       <p style="color:var(--green);font-weight:700;font-size:1rem;">✅ Payment Posted & Approved</p>
-      <p style="font-size:.85rem;margin-top:.4rem;">Amount: <strong>${fmtKES(amount)}</strong> · Method: ${method}</p>
-      <p style="font-size:.85rem;">Reference: <strong style="font-family:var(--mono);">${ref}</strong> · Receipt No: <strong style="font-family:var(--mono);">${receiptNo}</strong></p>
-      <div style="margin-top:1rem;display:flex;gap:.65rem;flex-wrap:wrap;">
+      <div style="margin:.75rem 0;display:grid;grid-template-columns:1fr 1fr;gap:.4rem .75rem;font-size:.83rem;">
+        <div style="color:var(--muted);">Amount Paid</div><div style="font-weight:700;">${fmtKES(amount)}</div>
+        <div style="color:var(--muted);">Applied to Bill</div><div style="font-weight:700;color:var(--green);">${fmtKES(appliedToBill)}</div>
+        ${overpaid>0?`<div style="color:var(--muted);">Overpayment / Credit</div><div style="font-weight:700;color:var(--accent);">${fmtKES(overpaid)}</div>`:''}
+        ${newCredit>0?`<div style="color:var(--muted);">Total Credit Balance</div><div style="font-weight:700;color:var(--accent);">${fmtKES(newCredit)}</div>`:''}
+        <div style="color:var(--muted);">Method</div><div>${method}</div>
+        <div style="color:var(--muted);">Reference</div><div style="font-family:var(--mono);font-size:.8rem;">${ref}</div>
+        <div style="color:var(--muted);">Receipt No.</div><div style="font-family:var(--mono);font-size:.8rem;">${receiptNo}</div>
+      </div>
+      ${overpaid>0?`<div style="background:rgba(0,194,255,.1);border:1px solid rgba(0,194,255,.25);border-radius:8px;padding:.65rem .85rem;font-size:.8rem;color:var(--accent);margin-bottom:.75rem;">
+        💡 <strong>Credit of ${fmtKES(overpaid)} recorded.</strong> It will automatically reduce ${c?.name}'s next bill.
+      </div>`:''}
+      <div style="display:flex;gap:.65rem;flex-wrap:wrap;">
         <button class="btn btn-sm btn-primary" onclick="printReceipt('${payId}')">🖨️ Print Receipt</button>
         <button class="btn btn-sm btn-outline" onclick="downloadReceiptPDF('${payId}')">⬇️ Download Receipt</button>
       </div>
     </div>`;
   }
-  const customers=STORE.get('customers')||[];
-  const c=customers.find(x=>x.id===custId);
-  const notifs=STORE.get('notifications')||[];
-  notifs.unshift({id:'n'+uid(),type:'payment',to:custId,title:`Payment Approved – ${c?.name}`,msg:`${fmtKES(amount)} received via ${method}. Receipt No: ${receiptNo}. Reference: ${ref}.`,date:payDate,read:false,priority:'normal'});
-  STORE.set('notifications',notifs);
-  toast(`Payment of ${fmtKES(amount)} posted! Receipt: ${receiptNo}`,'success');
+  toast(overpaid>0
+    ? `${fmtKES(amount)} posted. ${fmtKES(overpaid)} credited to account.`
+    : `Payment of ${fmtKES(amount)} posted! Receipt: ${receiptNo}`
+  ,'success');
 }
 
 function payLedger(){
@@ -2072,6 +2165,8 @@ function buildReceiptHTML(payId,mode){
       ${vatAmt?`<div class="charge-row"><span class="lbl">VAT (${settings.vatRate||16}%)</span><span class="val">${fmtKES(vatAmt)}</span></div>`:''}
       ${prevBal?`<div class="charge-row"><span class="lbl">Previous Balance</span><span class="val" style="color:#ef4444;">${fmtKES(prevBal)}</span></div>`:''}
       ${penalty?`<div class="charge-row"><span class="lbl">Late Payment Penalty</span><span class="val" style="color:#f59e0b;">${fmtKES(penalty)}</span></div>`:''}
+      ${b.grossTotal&&b.creditApplied?`<div class="charge-row"><span class="lbl">Gross Total</span><span class="val">${fmtKES(b.grossTotal)}</span></div>`:''}
+      ${b.creditApplied?`<div class="charge-row"><span class="lbl" style="color:${accent};">Credit Applied</span><span class="val" style="color:${accent};">− ${fmtKES(b.creditApplied)}</span></div>`:''}
       <div class="total-row"><span>TOTAL BILLED</span><span>${fmtKES(b.total||0)}</span></div>
     </div>
 
@@ -3435,11 +3530,14 @@ function renderCustOverview(){
   const bills=STORE.get('bills')||[];
   const payments=STORE.get('payments')||[];
   const meters=STORE.get('meters')||[];
+  const customers=STORE.get('customers')||[];
+  const custAccount=customers.find(c=>c.id===currentUser.id)||currentUser;
   const custBills=bills.filter(b=>b.customerId===currentUser.id);
   const custPays=payments.filter(p=>p.customerId===currentUser.id);
   const meter=meters.find(m=>m.customerId===currentUser.id);
   const outstanding=custBills.reduce((s,b)=>s+b.balance,0);
   const totalPaid=custBills.reduce((s,b)=>s+b.paid,0);
+  const creditBalance=custAccount.credit||0;
   const latestBill=custBills.sort((a,b)=>b.period.localeCompare(a.period))[0];
   return `
   <div class="cust-banner">
@@ -3465,12 +3563,19 @@ function renderCustOverview(){
       <div class="kpi-val" style="color:var(--green);">${fmtKES(totalPaid)}</div>
       <div class="kpi-sub">${custPays.length} payment(s)</div>
     </div>
+    ${creditBalance>0?`
+    <div class="kpi" style="border-top:3px solid var(--accent);background:rgba(0,194,255,.06);">
+      <div class="kpi-icon">💰</div>
+      <div class="kpi-label">Account Credit</div>
+      <div class="kpi-val" style="color:var(--accent);">${fmtKES(creditBalance)}</div>
+      <div class="kpi-sub">Auto-applies to next bill</div>
+    </div>`:`
     <div class="kpi" style="border-top:3px solid var(--accent);">
       <div class="kpi-icon">🔧</div>
       <div class="kpi-label">Meter Status</div>
       <div class="kpi-val" style="font-size:1.2rem;color:var(--accent);">${meter?meter.meterNo:'—'}</div>
       <div class="kpi-sub"><span class="badge ${meter?.status==='active'?'badge-green':'badge-red'}">${meter?.status||'Unknown'}</span></div>
-    </div>
+    </div>`}
   </div>
   ${latestBill?`
   <div class="card" style="margin-bottom:1rem;border-top:3px solid ${latestBill.balance?'var(--red)':'var(--green)'};">
