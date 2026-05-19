@@ -1524,7 +1524,8 @@ function bilInvoices(){
         <td style="color:var(--green);">${fmtKES(b.paid)}</td>
         <td style="color:${b.balance?'var(--red)':'var(--green)'};">${fmtKES(b.balance)}</td>
         <td><span class="badge ${stBadge}">${b.status}</span></td>
-        <td><button class="btn-icon" onclick="viewInvoiceModal('${b.id}')">👁</button></td>
+        <td><button class="btn-icon" title="View / Edit Bill" onclick="viewInvoiceModal('${b.id}')">👁</button>
+            <button class="btn-icon" title="Edit Bill" onclick="viewInvoiceModal('${b.id}');setTimeout(()=>bmTab('edit','${b.id}'),100)">✏️</button></td>
       </tr>`;
     }).join('')}
     </tbody>
@@ -1541,40 +1542,359 @@ function filterBillStatus(val){
 function viewInvoiceModal(billId){
   const bills=STORE.get('bills')||[];
   const b=bills.find(x=>x.id===billId);
+  if(!b){toast('Bill not found','error');return;}
   const customers=STORE.get('customers')||[];
-  const c=customers.find(x=>x.id===b?.customerId);
+  const c=customers.find(x=>x.id===b.customerId)||{};
   const s=STORE.get('settings')||{};
-  openModal(`Invoice – ${b?.invoiceNo}`,`
-    <div style="background:#fff;color:#1a1a2e;border-radius:10px;padding:1.5rem;">
-      <div style="display:flex;justify-content:space-between;margin-bottom:1.5rem;padding-bottom:1rem;border-bottom:2px solid #e5e7eb;">
-        <div><h2 style="color:#1e40af;font-size:1.2rem;">💧 ${s.company||'H2O Water Limited'}</h2><p style="font-size:.8rem;color:#6b7280;">${s.address||''}</p><p style="font-size:.8rem;color:#6b7280;">Paybill: ${s.paybill||'891234'}</p></div>
-        <div style="text-align:right;"><h3 style="font-size:1.5rem;color:#1e40af;">INVOICE</h3><p style="font-family:monospace;font-size:.9rem;">${b?.invoiceNo}</p><p style="font-size:.8rem;color:#6b7280;">Due: ${fmtDate(b?.dueDate)}</p></div>
+  const payments=STORE.get('payments')||[];
+  const billPayments=payments.filter(p=>p.billId===billId);
+  const edits=b.editLog||[];
+
+  const invoiceLines=()=>`
+    <div style="border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;margin-bottom:1rem;font-size:.85rem;">
+      <div style="display:flex;justify-content:space-between;padding:.55rem 1rem;border-bottom:1px solid #e5e7eb;background:#f8fafc;"><span style="color:#6b7280;">Customer</span><strong>${c.name||'—'} · ${c.meter||''}</strong></div>
+      <div style="display:flex;justify-content:space-between;padding:.55rem 1rem;border-bottom:1px solid #e5e7eb;"><span style="color:#6b7280;">Period</span><strong>${fmtPeriod(b.period)}</strong></div>
+      <div style="display:flex;justify-content:space-between;padding:.55rem 1rem;border-bottom:1px solid #e5e7eb;"><span style="color:#6b7280;">Due Date</span><strong>${fmtDate(b.dueDate)}</strong></div>
+      ${b.prevReading!==undefined?`<div style="display:flex;justify-content:space-between;padding:.55rem 1rem;border-bottom:1px solid #e5e7eb;"><span style="color:#6b7280;">Previous Reading</span><strong>${b.prevReading} m\u00b3</strong></div>`:''}
+      ${b.currReading!==undefined?`<div style="display:flex;justify-content:space-between;padding:.55rem 1rem;border-bottom:1px solid #e5e7eb;"><span style="color:#6b7280;">Current Reading</span><strong>${b.currReading} m\u00b3</strong></div>`:''}
+      <div style="display:flex;justify-content:space-between;padding:.55rem 1rem;border-bottom:1px solid #e5e7eb;"><span style="color:#6b7280;">Units</span><strong>${b.units} m\u00b3</strong></div>
+      <div style="display:flex;justify-content:space-between;padding:.55rem 1rem;border-bottom:1px solid #e5e7eb;"><span style="color:#6b7280;">Water Charge</span><strong>${fmtKES(b.water)}</strong></div>
+      <div style="display:flex;justify-content:space-between;padding:.55rem 1rem;border-bottom:1px solid #e5e7eb;"><span style="color:#6b7280;">Standing Charge</span><strong>${fmtKES(b.standing)}</strong></div>
+      ${b.vatAmt?`<div style="display:flex;justify-content:space-between;padding:.55rem 1rem;border-bottom:1px solid #e5e7eb;"><span style="color:#6b7280;">VAT</span><strong>${fmtKES(b.vatAmt)}</strong></div>`:''}
+      ${b.prevBal?`<div style="display:flex;justify-content:space-between;padding:.55rem 1rem;border-bottom:1px solid #e5e7eb;color:#ef4444;"><span>Previous Balance</span><strong>${fmtKES(b.prevBal)}</strong></div>`:''}
+      ${b.penalty?`<div style="display:flex;justify-content:space-between;padding:.55rem 1rem;border-bottom:1px solid #e5e7eb;color:#f59e0b;"><span>Penalty</span><strong>${fmtKES(b.penalty)}</strong></div>`:''}
+      ${b.creditApplied?`<div style="display:flex;justify-content:space-between;padding:.55rem 1rem;border-bottom:1px solid #e5e7eb;color:#0ea5e9;"><span>Credit Applied</span><strong>- ${fmtKES(b.creditApplied)}</strong></div>`:''}
+      ${b.discount?`<div style="display:flex;justify-content:space-between;padding:.55rem 1rem;border-bottom:1px solid #e5e7eb;color:#10b981;"><span>Discount / Waiver</span><strong>- ${fmtKES(b.discount)}</strong></div>`:''}
+      <div style="display:flex;justify-content:space-between;padding:.7rem 1rem;font-weight:700;font-size:1rem;color:#1e40af;background:#eff6ff;"><span>TOTAL DUE</span><strong>${fmtKES(b.total)}</strong></div>
+      <div style="display:flex;justify-content:space-between;padding:.55rem 1rem;border-top:1px solid #e5e7eb;"><span style="color:#16a34a;font-weight:600;">Paid</span><strong style="color:#16a34a;">${fmtKES(b.paid)}</strong></div>
+      <div style="display:flex;justify-content:space-between;padding:.55rem 1rem;"><span style="font-weight:600;color:${b.balance?'#ef4444':'#16a34a'};">Balance</span><strong style="color:${b.balance?'#ef4444':'#16a34a'};">${fmtKES(b.balance)}</strong></div>
+    </div>
+    ${billPayments.length?`<div style="font-size:.78rem;color:#6b7280;margin-bottom:.4rem;font-weight:600;">PAYMENT HISTORY</div>
+    <div style="border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;margin-bottom:.75rem;">
+      ${billPayments.map(p=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:.45rem 1rem;border-bottom:1px solid #f3f4f6;font-size:.8rem;">
+        <span style="color:#6b7280;">${fmtDate(p.date)} - ${p.method}</span>
+        <span style="font-weight:700;color:#16a34a;">${fmtKES(p.amount)}</span>
+        <span style="font-family:monospace;font-size:.73rem;color:#9ca3af;">${p.receiptNo||p.reference}</span>
+      </div>`).join('')}
+    </div>`:''}
+    <div style="display:flex;align-items:center;gap:.5rem;">
+      <span style="font-size:.78rem;padding:.2rem .6rem;border-radius:20px;font-weight:700;background:${{paid:'#dcfce7',unpaid:'#fef9c3',overdue:'#fee2e2'}[b.status]||'#f3f4f6'};color:${{paid:'#16a34a',unpaid:'#ca8a04',overdue:'#dc2626'}[b.status]||'#6b7280'};">${(b.status||'').toUpperCase()}</span>
+      ${edits.length?`<span style="font-size:.73rem;color:#6b7280;">Edited ${edits.length}x</span>`:''}
+      ${b.estimated?`<span style="font-size:.73rem;color:#f59e0b;">Estimated reading</span>`:''}
+    </div>`;
+
+  const rate=b.rate||s.rate||150;
+  const editForm=()=>`
+    <div style="color:var(--text);">
+      <div style="display:flex;gap:.4rem;margin-bottom:1.25rem;flex-wrap:wrap;" id="be-tabs">
+        <button class="btn btn-sm btn-primary" onclick="beTab(this,'be-readings')">Readings</button>
+        <button class="btn btn-sm btn-outline" onclick="beTab(this,'be-charges')">Charges</button>
+        <button class="btn btn-sm btn-outline" onclick="beTab(this,'be-discount')">Waiver/Discount</button>
+        <button class="btn btn-sm btn-outline" onclick="beTab(this,'be-payment')">Payment Adj.</button>
+        <button class="btn btn-sm btn-outline" onclick="beTab(this,'be-log')">Audit Log</button>
       </div>
-      <div style="margin-bottom:1rem;"><p style="font-weight:700;">${c?.name}</p><p style="font-size:.85rem;color:#6b7280;">Meter: ${c?.meter} · ${c?.area}</p></div>
-      <div style="border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;margin-bottom:1rem;">
-        <div style="display:flex;justify-content:space-between;padding:.6rem 1rem;border-bottom:1px solid #e5e7eb;font-size:.88rem;"><span>Period</span><strong>${fmtPeriod(b?.period)}</strong></div>
-        <div style="display:flex;justify-content:space-between;padding:.6rem 1rem;border-bottom:1px solid #e5e7eb;font-size:.88rem;"><span>Units Consumed</span><strong>${b?.units} m³</strong></div>
-        ${b?.prevReading!==undefined?`<div style="display:flex;justify-content:space-between;padding:.6rem 1rem;border-bottom:1px solid #e5e7eb;font-size:.88rem;color:#6b7280;"><span>Previous Reading</span><strong>${b.prevReading} m³</strong></div>`:''}
-        ${b?.currReading!==undefined?`<div style="display:flex;justify-content:space-between;padding:.6rem 1rem;border-bottom:1px solid #e5e7eb;font-size:.88rem;color:#6b7280;"><span>Current Reading</span><strong>${b.currReading} m³</strong></div>`:''}
-        <div style="display:flex;justify-content:space-between;padding:.6rem 1rem;border-bottom:1px solid #e5e7eb;font-size:.88rem;"><span>Water Charge (${b?.units} m³ × KES ${b?.rate||(STORE.get('settings')||{}).rate||150}/m³)</span><strong>${fmtKES(b?.water)}</strong></div>
-        <div style="display:flex;justify-content:space-between;padding:.6rem 1rem;border-bottom:1px solid #e5e7eb;font-size:.88rem;"><span>Standing Charge</span><strong>${fmtKES(b?.standing)}</strong></div>
-        ${b?.vatAmt?`<div style="display:flex;justify-content:space-between;padding:.6rem 1rem;border-bottom:1px solid #e5e7eb;font-size:.88rem;"><span>VAT</span><strong>${fmtKES(b.vatAmt)}</strong></div>`:''}
-        ${b?.prevBal?`<div style="display:flex;justify-content:space-between;padding:.6rem 1rem;border-bottom:1px solid #e5e7eb;font-size:.88rem;color:#ef4444;"><span>Previous Balance</span><strong>${fmtKES(b.prevBal)}</strong></div>`:''}
-        ${b?.penalty?`<div style="display:flex;justify-content:space-between;padding:.6rem 1rem;border-bottom:1px solid #e5e7eb;font-size:.88rem;color:#ef4444;"><span>Late Penalty</span><strong>${fmtKES(b.penalty)}</strong></div>`:''}
-        ${b?.grossTotal&&b?.creditApplied?`<div style="display:flex;justify-content:space-between;padding:.6rem 1rem;border-bottom:1px solid #e5e7eb;font-size:.88rem;color:#6b7280;"><span>Gross Total</span><strong>${fmtKES(b.grossTotal)}</strong></div>`:''}
-        ${b?.creditApplied?`<div style="display:flex;justify-content:space-between;padding:.6rem 1rem;border-bottom:1px solid #e5e7eb;font-size:.88rem;color:#0ea5e9;"><span>Credit Applied</span><strong>− ${fmtKES(b.creditApplied)}</strong></div>`:''}
-        <div style="display:flex;justify-content:space-between;padding:.75rem 1rem;font-weight:700;font-size:1rem;color:#1e40af;background:#eff6ff;"><span>TOTAL DUE</span><strong>${fmtKES(b?.total)}</strong></div>
+      <div id="be-readings" class="be-panel">
+        <p style="font-size:.8rem;color:var(--muted);margin-bottom:1rem;background:rgba(0,194,255,.07);padding:.65rem .85rem;border-radius:8px;">Correct meter readings if the customer disputes the recorded values. Bill total will be recalculated automatically.</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem;margin-bottom:.75rem;">
+          <div class="form-group"><label>Previous Reading (m3)</label><input type="number" id="be-prev" value="${b.prevReading!=null?b.prevReading:''}" placeholder="e.g. 200" oninput="beCalc(${rate})"></div>
+          <div class="form-group"><label>Current Reading (m3)</label><input type="number" id="be-curr" value="${b.currReading!=null?b.currReading:''}" placeholder="e.g. 245" oninput="beCalc(${rate})"></div>
+        </div>
+        <div id="be-reading-preview" style="font-size:.83rem;background:rgba(0,194,255,.07);border-radius:8px;padding:.65rem .85rem;display:none;margin-bottom:.75rem;"></div>
+        <div class="form-group"><label>Reason for Correction</label><input id="be-read-reason" placeholder="e.g. Meter re-read confirmed lower usage"></div>
+        <button class="btn btn-primary btn-sm" style="margin-top:.5rem;" onclick="beSaveReadings('${billId}')">Apply Reading Correction</button>
       </div>
-      <div style="background:#f0fdf4;border-radius:8px;padding:.75rem 1rem;font-size:.85rem;">
-        <strong style="color:#16a34a;">Amount Paid: ${fmtKES(b?.paid)}</strong> · 
-        <strong style="color:${b?.balance?'#ef4444':'#16a34a'};">Balance: ${fmtKES(b?.balance)}</strong>
+      <div id="be-charges" class="be-panel" style="display:none;">
+        <p style="font-size:.8rem;color:var(--muted);margin-bottom:1rem;background:rgba(0,194,255,.07);padding:.65rem .85rem;border-radius:8px;">Manually override individual charge components. Changes recalculate the total due.</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem;">
+          <div class="form-group"><label>Water Charge (KES)</label><input type="number" id="be-water" value="${b.water||0}" oninput="beTotalPreview()"></div>
+          <div class="form-group"><label>Standing Charge (KES)</label><input type="number" id="be-standing" value="${b.standing||0}" oninput="beTotalPreview()"></div>
+          <div class="form-group"><label>VAT (KES)</label><input type="number" id="be-vat" value="${b.vatAmt||0}" oninput="beTotalPreview()"></div>
+          <div class="form-group"><label>Previous Balance (KES)</label><input type="number" id="be-prevbal" value="${b.prevBal||0}" oninput="beTotalPreview()"></div>
+          <div class="form-group"><label>Penalty (KES)</label><input type="number" id="be-penalty" value="${b.penalty||0}" oninput="beTotalPreview()"></div>
+          <div class="form-group"><label>Due Date</label><input type="date" id="be-due" value="${b.dueDate||''}"></div>
+        </div>
+        <div id="be-charges-preview" style="font-size:.83rem;margin:.5rem 0;"></div>
+        <div class="form-group"><label>Reason</label><input id="be-charge-reason" placeholder="e.g. Standing charge corrected - meter was inactive"></div>
+        <button class="btn btn-primary btn-sm" style="margin-top:.5rem;" onclick="beSaveCharges('${billId}')">Apply Charge Adjustment</button>
       </div>
-      <p style="margin-top:1rem;font-size:.78rem;color:#9ca3af;text-align:center;">Pay via M-Pesa Paybill ${s.paybill||'891234'} · Acc: ${c?.meter}</p>
-    </div>`,
-    `<button class="btn btn-outline btn-sm" onclick="closeModal(true)">Close</button>`
+      <div id="be-discount" class="be-panel" style="display:none;">
+        <p style="font-size:.8rem;color:var(--muted);margin-bottom:1rem;background:rgba(16,185,129,.08);padding:.65rem .85rem;border-radius:8px;">Grant a one-time waiver or discount on this bill. Reduces the balance owed immediately.</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem;margin-bottom:.75rem;">
+          <div class="form-group"><label>Discount Type</label>
+            <select id="be-disc-type" onchange="beDiscPreview()">
+              <option value="fixed">Fixed Amount (KES)</option>
+              <option value="percent">Percentage (%)</option>
+              <option value="fullwaiver">Full Waiver (100%)</option>
+            </select>
+          </div>
+          <div class="form-group"><label id="be-disc-lbl">Amount (KES)</label>
+            <input type="number" id="be-disc-val" value="0" oninput="beDiscPreview()" placeholder="0">
+          </div>
+        </div>
+        <div id="be-disc-preview" style="margin-bottom:.75rem;"></div>
+        <div class="form-group"><label>Authorised By</label><input id="be-disc-auth" value="${currentUser?.name||'Admin'}"></div>
+        <div class="form-group"><label>Reason / Reference</label><input id="be-disc-reason" placeholder="e.g. Hardship waiver - Ref: WVR-2026-01"></div>
+        <button class="btn btn-primary btn-sm" style="margin-top:.25rem;" onclick="beSaveDiscount('${billId}')">Apply Waiver / Discount</button>
+      </div>
+      <div id="be-payment" class="be-panel" style="display:none;">
+        <p style="font-size:.8rem;color:var(--muted);margin-bottom:1rem;background:rgba(245,158,11,.07);padding:.65rem .85rem;border-radius:8px;">Record a manual payment correction, reversal, or note. For corrections and disputes only.</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem;">
+          <div class="form-group"><label>Adjustment Type</label>
+            <select id="be-pay-type">
+              <option value="credit">Add Credit / Offline Payment</option>
+              <option value="debit">Reverse Payment</option>
+              <option value="note">Note Only</option>
+            </select>
+          </div>
+          <div class="form-group"><label>Amount (KES)</label><input type="number" id="be-pay-amt" value="0" placeholder="0"></div>
+          <div class="form-group"><label>Reference</label><input id="be-pay-ref" placeholder="e.g. MPesa code"></div>
+          <div class="form-group"><label>Date</label><input type="date" id="be-pay-date" value="${new Date().toISOString().split('T')[0]}"></div>
+        </div>
+        <div class="form-group"><label>Reason / Note</label><input id="be-pay-reason" placeholder="e.g. Payment confirmed manually - delay in system posting"></div>
+        <button class="btn btn-primary btn-sm" style="margin-top:.5rem;" onclick="beSavePayAdj('${billId}')">Apply Payment Adjustment</button>
+      </div>
+      <div id="be-log" class="be-panel" style="display:none;">
+        ${edits.length?`<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+          ${edits.map((e,i)=>`<div style="padding:.75rem 1rem;${i<edits.length-1?'border-bottom:1px solid var(--border);':''}">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.2rem;">
+              <span style="font-size:.8rem;font-weight:700;color:var(--accent);">${e.type}</span>
+              <span style="font-size:.72rem;color:var(--muted);">${fmtDate(e.date)} - ${e.by||'Admin'}</span>
+            </div>
+            <div style="font-size:.8rem;">${e.summary}</div>
+            ${e.reason?`<div style="font-size:.75rem;color:var(--muted);margin-top:.15rem;">Reason: ${e.reason}</div>`:''}
+          </div>`).join('')}
+        </div>`:`<div style="text-align:center;padding:2rem;color:var(--muted);">No edits recorded yet</div>`}
+      </div>
+    </div>`;
+
+  openModal(`Bill Editor - ${b.invoiceNo}`,`
+    <div style="display:flex;gap:.5rem;margin-bottom:1.25rem;flex-wrap:wrap;border-bottom:1px solid var(--border);padding-bottom:.75rem;">
+      <button class="btn btn-sm btn-primary" id="bm-view" onclick="bmTab('view','${billId}')">View Invoice</button>
+      <button class="btn btn-sm btn-outline" id="bm-edit" onclick="bmTab('edit','${billId}')">Edit / Correct</button>
+    </div>
+    <div id="bm-view-pane">${invoiceLines()}</div>
+    <div id="bm-edit-pane" style="display:none;">${editForm()}</div>`,
+    `<button class="btn btn-outline btn-sm" onclick="closeModal(true)">Close</button>
+     <button class="btn btn-sm btn-outline" onclick="printInvoice('${billId}')">Print Invoice</button>`
   );
 }
 
+function bmTab(tab,billId){
+  const vp=el('bm-view-pane'),ep=el('bm-edit-pane');
+  const vb=el('bm-view'),eb=el('bm-edit');
+  if(!vp||!ep)return;
+  if(tab==='view'){vp.style.display='';ep.style.display='none';if(vb)vb.className='btn btn-sm btn-primary';if(eb)eb.className='btn btn-sm btn-outline';}
+  else{vp.style.display='none';ep.style.display='';if(vb)vb.className='btn btn-sm btn-outline';if(eb)eb.className='btn btn-sm btn-primary';}
+}
+
+function beTab(btn,panelId){
+  qa('.be-panel').forEach(p=>p.style.display='none');
+  const panel=el(panelId);if(panel)panel.style.display='';
+  qa('#be-tabs button').forEach(b=>{b.className='btn btn-sm btn-outline';});
+  if(btn)btn.className='btn btn-sm btn-primary';
+}
+
+function beCalc(rate){
+  const prev=parseFloat(q('#be-prev')?.value)||0;
+  const curr=parseFloat(q('#be-curr')?.value)||0;
+  const preview=el('be-reading-preview');
+  if(!preview)return;
+  if(curr>prev){
+    const units=curr-prev;
+    const s=STORE.get('settings')||{};
+    const r=rate||s.rate||150;
+    const standing=s.standing||200;
+    const water=units*r;
+    preview.style.display='';
+    preview.innerHTML=`Units: <strong>${units} m3</strong> - Water: <strong>${fmtKES(water)}</strong> - Standing: <strong>${fmtKES(standing)}</strong> - <strong style="color:var(--accent);">New Total: ${fmtKES(water+standing)}</strong>`;
+  }else{preview.style.display='none';}
+}
+
+function beTotalPreview(){
+  const water=parseFloat(q('#be-water')?.value)||0;
+  const standing=parseFloat(q('#be-standing')?.value)||0;
+  const vat=parseFloat(q('#be-vat')?.value)||0;
+  const prevBal=parseFloat(q('#be-prevbal')?.value)||0;
+  const penalty=parseFloat(q('#be-penalty')?.value)||0;
+  const gross=water+standing+vat+prevBal+penalty;
+  const preview=el('be-charges-preview');
+  if(preview)preview.innerHTML=`<span style="color:var(--accent);font-weight:700;">New Gross Total: ${fmtKES(gross)}</span>`;
+}
+
+function beDiscPreview(){
+  const type=q('#be-disc-type')?.value;
+  const val=parseFloat(q('#be-disc-val')?.value)||0;
+  const lbl=el('be-disc-lbl');
+  const preview=el('be-disc-preview');
+  if(lbl)lbl.textContent=type==='percent'?'Percentage (%)':'Amount (KES)';
+  if(!preview)return;
+  preview.innerHTML=type==='fullwaiver'
+    ?`<div style="background:rgba(16,185,129,.1);border-radius:8px;padding:.6rem .85rem;color:#10b981;font-weight:700;">Full waiver - entire outstanding balance will be cleared</div>`
+    :type==='percent'&&val
+    ?`<div style="background:rgba(16,185,129,.1);border-radius:8px;padding:.6rem .85rem;color:#10b981;">${val}% discount will be applied to the current balance</div>`
+    :val
+    ?`<div style="background:rgba(16,185,129,.1);border-radius:8px;padding:.6rem .85rem;color:#10b981;">${fmtKES(val)} will be deducted from the balance</div>`
+    :'';
+}
+
+function beLogEntry(bill,type,summary,reason,extra){
+  if(!bill.editLog)bill.editLog=[];
+  bill.editLog.push({type,summary,reason:reason||'',by:currentUser?.name||'Admin',date:new Date().toISOString().split('T')[0],...(extra||{})});
+}
+
+function beSaveReadings(billId){
+  const bills=STORE.get('bills')||[];
+  const b=bills.find(x=>x.id===billId);
+  if(!b){toast('Bill not found','error');return;}
+  const prev=parseFloat(q('#be-prev')?.value);
+  const curr=parseFloat(q('#be-curr')?.value);
+  const reason=q('#be-read-reason')?.value||'Reading correction';
+  if(isNaN(prev)||isNaN(curr)||curr<=prev){toast('Enter valid readings (current must exceed previous)','error');return;}
+  const s=STORE.get('settings')||{};
+  const rate=b.rate||s.rate||150;
+  const standing=b.standing||s.standing||200;
+  const units=curr-prev;
+  const water=units*rate;
+  const vatAmt=b.vatAmt?Math.round(water*(s.vatRate||16)/100):0;
+  const oldTotal=b.total;
+  const gross=water+vatAmt+standing+(b.prevBal||0)+(b.penalty||0)-(b.discount||0)-(b.creditApplied||0);
+  b.prevReading=prev;b.currReading=curr;b.units=units;b.water=water;b.vatAmt=vatAmt;
+  b.total=Math.max(0,gross);b.balance=Math.max(0,gross-b.paid);
+  b.status=b.balance<=0?'paid':'unpaid';
+  beLogEntry(b,'Reading Correction',`Readings: ${prev} to ${curr} m3 (${units} units). Total: ${fmtKES(oldTotal)} to ${fmtKES(b.total)}`,reason);
+  STORE.set('bills',bills);
+  toast('Reading corrected and bill recalculated.','success');
+  closeModal(true);navigateTo('billing');
+}
+
+function beSaveCharges(billId){
+  const bills=STORE.get('bills')||[];
+  const b=bills.find(x=>x.id===billId);
+  if(!b)return;
+  const reason=q('#be-charge-reason')?.value||'Charge adjustment';
+  const oldTotal=b.total;
+  b.water=parseFloat(q('#be-water')?.value)||0;
+  b.standing=parseFloat(q('#be-standing')?.value)||0;
+  b.vatAmt=parseFloat(q('#be-vat')?.value)||0;
+  b.prevBal=parseFloat(q('#be-prevbal')?.value)||0;
+  b.penalty=parseFloat(q('#be-penalty')?.value)||0;
+  if(q('#be-due')?.value)b.dueDate=q('#be-due').value;
+  const gross=b.water+b.standing+b.vatAmt+b.prevBal+b.penalty-(b.discount||0)-(b.creditApplied||0);
+  b.total=Math.max(0,gross);b.balance=Math.max(0,gross-b.paid);
+  b.status=b.balance<=0?'paid':'unpaid';
+  beLogEntry(b,'Charge Adjustment',`Charges updated. Total: ${fmtKES(oldTotal)} to ${fmtKES(b.total)}`,reason);
+  STORE.set('bills',bills);
+  toast('Charges updated and bill recalculated.','success');
+  closeModal(true);navigateTo('billing');
+}
+
+function beSaveDiscount(billId){
+  const bills=STORE.get('bills')||[];
+  const b=bills.find(x=>x.id===billId);
+  if(!b)return;
+  const type=q('#be-disc-type')?.value;
+  const val=parseFloat(q('#be-disc-val')?.value)||0;
+  const reason=q('#be-disc-reason')?.value||'Discount applied';
+  const auth=q('#be-disc-auth')?.value||'Admin';
+  let discAmt=0;
+  if(type==='fullwaiver'){discAmt=b.balance;}
+  else if(type==='percent'){discAmt=Math.round(b.balance*val/100);}
+  else{discAmt=Math.min(val,b.balance);}
+  if(discAmt<=0){toast('Discount amount must be greater than zero','error');return;}
+  b.discount=(b.discount||0)+discAmt;
+  b.total=Math.max(0,b.total-discAmt);
+  b.balance=Math.max(0,b.balance-discAmt);
+  b.status=b.balance<=0?'paid':'unpaid';
+  beLogEntry(b,'Waiver/Discount',`${type==='fullwaiver'?'Full waiver':type==='percent'?val+'% discount':'Fixed discount of '+fmtKES(discAmt)} applied. New balance: ${fmtKES(b.balance)}`,reason,{auth,discAmt});
+  const notifs=STORE.get('notifications')||[];
+  notifs.unshift({id:'n'+uid(),type:'info',to:b.customerId,title:`Bill Adjustment - ${b.invoiceNo}`,msg:`A ${type==='fullwaiver'?'full waiver':fmtKES(discAmt)+' discount'} has been applied to your bill for ${fmtPeriod(b.period)}. New balance: ${fmtKES(b.balance)}.`,date:new Date().toISOString().split('T')[0],read:false,priority:'normal'});
+  STORE.set('notifications',notifs);
+  STORE.set('bills',bills);
+  toast(`Discount of ${fmtKES(discAmt)} applied.${b.balance<=0?' Bill fully waived!':' New balance: '+fmtKES(b.balance)}`,'success');
+  closeModal(true);navigateTo('billing');
+}
+
+function beSavePayAdj(billId){
+  const bills=STORE.get('bills')||[];
+  const b=bills.find(x=>x.id===billId);
+  if(!b)return;
+  const type=q('#be-pay-type')?.value;
+  const amt=parseFloat(q('#be-pay-amt')?.value)||0;
+  const ref=q('#be-pay-ref')?.value||'';
+  const date=q('#be-pay-date')?.value||new Date().toISOString().split('T')[0];
+  const reason=q('#be-pay-reason')?.value||'Payment adjustment';
+  if(type!=='note'&&amt<=0){toast('Enter a valid amount','error');return;}
+  let summary='';
+  if(type==='credit'){
+    b.paid+=amt;b.balance=Math.max(0,b.balance-amt);
+    b.status=b.balance<=0?'paid':'unpaid';
+    summary=`Payment credit of ${fmtKES(amt)} added. Balance: ${fmtKES(b.balance)}`;
+    const payments=STORE.get('payments')||[];
+    payments.push({id:'p'+uid(),customerId:b.customerId,billId,amount:amt,method:'Manual Adjustment',reference:ref||'ADJ'+uid().slice(0,6),date,note:reason,receiptNo:'ADJ-'+String(payments.length+1).padStart(4,'0'),approved:true,approvedBy:currentUser?.name||'Admin'});
+    STORE.set('payments',payments);
+  }else if(type==='debit'){
+    if(amt>b.paid){toast('Reversal exceeds amount paid on this bill','error');return;}
+    b.paid-=amt;b.balance+=amt;
+    b.status=b.balance<=0?'paid':'unpaid';
+    summary=`Payment reversal of ${fmtKES(amt)}. Balance: ${fmtKES(b.balance)}`;
+  }else{
+    summary=`Note: ${reason}`;
+  }
+  beLogEntry(b,'Payment Adjustment',summary,reason,{ref,adjType:type});
+  STORE.set('bills',bills);
+  toast('Payment adjustment saved.','success');
+  closeModal(true);navigateTo('billing');
+}
+
+function printInvoice(billId){
+  const bills=STORE.get('bills')||[];
+  const b=bills.find(x=>x.id===billId);
+  if(!b){toast('Bill not found','error');return;}
+  const customers=STORE.get('customers')||[];
+  const c=customers.find(x=>x.id===b.customerId)||{};
+  const s=STORE.get('settings')||{};
+  const w=window.open('','_blank','width=600,height=750');
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Invoice ${b.invoiceNo}</title>
+  <style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:'Segoe UI',Arial,sans-serif;padding:2rem;color:#111;}
+  .hdr{display:flex;justify-content:space-between;padding-bottom:1rem;border-bottom:2px solid #1e40af;margin-bottom:1.5rem;}
+  .co{color:#1e40af;font-size:1.1rem;font-weight:800;}.sub{font-size:.78rem;color:#6b7280;margin-top:.2rem;}
+  .it{font-size:1.4rem;color:#1e40af;font-weight:800;text-align:right;}
+  .row{display:flex;justify-content:space-between;padding:.5rem 1rem;border-bottom:1px solid #e5e7eb;font-size:.87rem;}
+  .total{font-weight:700;font-size:1rem;color:#1e40af;background:#eff6ff;padding:.7rem 1rem;}
+  .badge{display:inline-block;padding:.15rem .55rem;border-radius:20px;font-size:.73rem;font-weight:700;}
+  footer{text-align:center;font-size:.72rem;color:#9ca3af;margin-top:2rem;}
+  @media print{@page{margin:.5cm;}}
+  </style></head><body>
+  <div class="hdr">
+    <div><div class="co">H2O ${s.company||'H2O Water Limited'}</div>
+    <div class="sub">${s.address||''}</div>
+    <div class="sub">Paybill: ${s.paybill||''}</div></div>
+    <div><div class="it">INVOICE</div>
+    <div style="font-family:monospace;font-size:.85rem;">${b.invoiceNo}</div>
+    <div class="sub">Due: ${fmtDate(b.dueDate)}</div></div>
+  </div>
+  <p style="font-weight:700;margin-bottom:.15rem;">${c.name||''}</p>
+  <p style="font-size:.8rem;color:#6b7280;margin-bottom:1.25rem;">Meter: ${c.meter||''} - ${c.area||''}</p>
+  <div style="border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;margin-bottom:1.25rem;">
+    <div class="row"><span>Period</span><strong>${fmtPeriod(b.period)}</strong></div>
+    ${b.prevReading!=null?`<div class="row"><span>Previous Reading</span><strong>${b.prevReading} m3</strong></div>`:''}
+    ${b.currReading!=null?`<div class="row"><span>Current Reading</span><strong>${b.currReading} m3</strong></div>`:''}
+    <div class="row"><span>Units</span><strong>${b.units} m3</strong></div>
+    <div class="row"><span>Water Charge</span><strong>KES ${(b.water||0).toLocaleString()}</strong></div>
+    <div class="row"><span>Standing Charge</span><strong>KES ${(b.standing||0).toLocaleString()}</strong></div>
+    ${b.vatAmt?`<div class="row"><span>VAT</span><strong>KES ${b.vatAmt.toLocaleString()}</strong></div>`:''}
+    ${b.prevBal?`<div class="row" style="color:#ef4444;"><span>Previous Balance</span><strong>KES ${b.prevBal.toLocaleString()}</strong></div>`:''}
+    ${b.penalty?`<div class="row" style="color:#f59e0b;"><span>Penalty</span><strong>KES ${b.penalty.toLocaleString()}</strong></div>`:''}
+    ${b.discount?`<div class="row" style="color:#10b981;"><span>Discount/Waiver</span><strong>- KES ${b.discount.toLocaleString()}</strong></div>`:''}
+    ${b.creditApplied?`<div class="row" style="color:#0ea5e9;"><span>Credit Applied</span><strong>- KES ${b.creditApplied.toLocaleString()}</strong></div>`:''}
+    <div class="row total"><span>TOTAL DUE</span><strong>KES ${(b.total||0).toLocaleString()}</strong></div>
+    <div class="row"><span style="color:#16a34a;">Paid</span><strong style="color:#16a34a;">KES ${(b.paid||0).toLocaleString()}</strong></div>
+    <div class="row"><span style="color:${b.balance?'#ef4444':'#16a34a'};font-weight:700;">Balance</span><strong style="color:${b.balance?'#ef4444':'#16a34a'};">KES ${(b.balance||0).toLocaleString()}</strong></div>
+  </div>
+  <footer>${s.company||'H2O Water Limited'} - ${s.address||''}<br>Pay via Paybill ${s.paybill||''} Acc: ${c.meter||''} - Generated: ${new Date().toLocaleString('en-KE')}</footer>
+  </body></html>`);
+  w.document.close();w.onload=()=>w.print();
+}
 function bilTariff(){
   const s=STORE.get('settings')||{rate:150,standing:200,vat:false,vatRate:16,penalty:true,penaltyRate:10};
   const sims=[5,10,20,35,60,100];
