@@ -1748,49 +1748,259 @@ function loadCustProfileAdmin(){
 }
 
 function custAddForm(){
+  const today=new Date().toISOString().split('T')[0];
+  const meters=STORE.get('meters')||[];
+  const customers=STORE.get('customers')||[];
+  const usedMeters=customers.map(c=>c.meter);
+  const freeMeters=meters.filter(m=>!usedMeters.includes(m.meterNo)&&m.status!=='decommissioned');
+  const meterOpts=freeMeters.length
+    ? freeMeters.map(m=>`<option value="${m.meterNo}">${m.meterNo} — ${m.area} (${m.type})</option>`).join('')
+    : '<option value="">No unassigned meters available</option>';
   return `
-  <div style="max-width:600px;">
-    <div class="card">
-      <div class="card-title">Register New Customer</div>
+  <div style="max-width:660px;">
+    <!-- STEP 1: FORM -->
+    <div class="card" id="nc-form-card">
+      <div class="card-title" style="margin-bottom:1.25rem;">➕ Register New Customer</div>
+
+      <p style="font-size:.82rem;color:var(--muted);margin-bottom:1.25rem;background:rgba(0,194,255,.07);padding:.75rem 1rem;border-radius:8px;border-left:3px solid var(--accent);">
+        Fill in the customer details below. Login credentials for the customer portal will be auto-generated upon registration.
+      </p>
+
+      <div class="card-title" style="font-size:.78rem;letter-spacing:.08em;color:var(--muted);margin-bottom:.75rem;">PERSONAL DETAILS</div>
       <div class="form-row">
-        <div class="form-group"><label>Full Name</label><input id="nc-name" placeholder="John Kamau"></div>
-        <div class="form-group"><label>Meter Number</label><input id="nc-meter" placeholder="MTR-0200"></div>
+        <div class="form-group"><label>Full Name <span style="color:var(--danger)">*</span></label><input id="nc-name" placeholder="e.g. John Kamau"></div>
+        <div class="form-group"><label>Phone Number <span style="color:var(--danger)">*</span></label><input id="nc-phone" placeholder="e.g. 0712345678" oninput="ncAutoPass()"></div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label>Phone</label><input id="nc-phone" placeholder="0712345678"></div>
-        <div class="form-group"><label>Email</label><input id="nc-email" type="email" placeholder="john@gmail.com"></div>
+        <div class="form-group"><label>Email Address</label><input id="nc-email" type="email" placeholder="john@gmail.com"></div>
+        <div class="form-group"><label>ID / Reference No.</label><input id="nc-idno" placeholder="e.g. 12345678"></div>
       </div>
+      <div class="form-group"><label>Physical Address</label><input id="nc-addr" placeholder="e.g. Westlands Rd, House No. 14"></div>
+
+      <div class="card-title" style="font-size:.78rem;letter-spacing:.08em;color:var(--muted);margin:.75rem 0;padding-top:.75rem;border-top:1px solid var(--border);">METER & ACCOUNT</div>
       <div class="form-row">
-        <div class="form-group"><label>Area</label><input id="nc-area" placeholder="Westlands"></div>
+        <div class="form-group">
+          <label>Assign Meter Number <span style="color:var(--danger)">*</span></label>
+          <select id="nc-meter" onchange="ncMeterChange(this.value)">
+            <option value="">— Select meter —</option>
+            ${meterOpts}
+            <option value="__manual__">✏️ Enter manually…</option>
+          </select>
+        </div>
         <div class="form-group"><label>Customer Type</label>
           <select id="nc-type"><option>Residential</option><option>Commercial</option><option>Institutional</option><option>Government</option></select>
         </div>
       </div>
-      <div class="form-group"><label>Address</label><input id="nc-addr" placeholder="Full address"></div>
-      <div class="form-row">
-        <div class="form-group"><label>Password</label><input id="nc-pass" type="password" placeholder="Set customer portal password"></div>
-        <div class="form-group"><label>Join Date</label><input id="nc-date" type="date" value="${new Date().toISOString().split('T')[0]}"></div>
+      <div class="form-group" id="nc-manual-wrap" style="display:none;">
+        <label>Manual Meter Number</label>
+        <input id="nc-meter-manual" placeholder="e.g. MTR-0250">
       </div>
-      <button class="btn btn-primary btn-full" onclick="saveNewCustomer()">Register Customer ✓</button>
+      <div class="form-row">
+        <div class="form-group"><label>Area / Zone</label><input id="nc-area" placeholder="e.g. Westlands"></div>
+        <div class="form-group"><label>Join Date</label><input id="nc-date" type="date" value="${today}"></div>
+      </div>
+
+      <div class="card-title" style="font-size:.78rem;letter-spacing:.08em;color:var(--muted);margin:.75rem 0;padding-top:.75rem;border-top:1px solid var(--border);">PORTAL LOGIN CREDENTIALS</div>
+      <p style="font-size:.8rem;color:var(--muted);margin-bottom:.75rem;">The meter number serves as the customer's username. A password is auto-suggested from their phone number — you may customise it.</p>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Username (Meter No.)</label>
+          <input id="nc-uname-display" readonly style="background:rgba(0,194,255,.06);color:var(--accent);font-weight:700;" placeholder="Auto-filled from meter">
+        </div>
+        <div class="form-group">
+          <label>Password <span style="color:var(--danger)">*</span></label>
+          <div style="position:relative;">
+            <input id="nc-pass" type="text" placeholder="Auto-generated" style="padding-right:2.5rem;">
+            <span onclick="ncGenPass()" title="Generate random password" style="position:absolute;right:.65rem;top:50%;transform:translateY(-50%);cursor:pointer;font-size:1rem;">🔄</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:.75rem;margin-top:1rem;">
+        <button class="btn btn-outline" style="flex:1;" onclick="ncReset()">Clear Form</button>
+        <button class="btn btn-primary" style="flex:2;" onclick="saveNewCustomer()">Register Customer & Generate Login ✓</button>
+      </div>
+    </div>
+
+    <!-- STEP 2: SUCCESS CREDENTIAL CARD (hidden until save) -->
+    <div class="card" id="nc-success-card" style="display:none;border:2px solid var(--success);">
+      <div style="text-align:center;margin-bottom:1.25rem;">
+        <div style="font-size:2.5rem;">✅</div>
+        <div style="font-weight:700;font-size:1.1rem;margin-top:.5rem;">Customer Registered Successfully!</div>
+        <div style="color:var(--muted);font-size:.85rem;" id="nc-success-subtitle"></div>
+      </div>
+
+      <div style="background:rgba(0,194,255,.07);border:1px solid var(--accent);border-radius:10px;padding:1.25rem;margin-bottom:1.25rem;">
+        <div style="font-size:.75rem;font-weight:700;letter-spacing:.1em;color:var(--accent);margin-bottom:.75rem;">🔐 CUSTOMER PORTAL LOGIN DETAILS</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem;">
+          <div>
+            <div style="font-size:.72rem;color:var(--muted);margin-bottom:.2rem;">USERNAME (Meter No.)</div>
+            <div id="nc-cred-user" style="font-weight:700;font-size:1rem;font-family:var(--mono);"></div>
+          </div>
+          <div>
+            <div style="font-size:.72rem;color:var(--muted);margin-bottom:.2rem;">PASSWORD</div>
+            <div id="nc-cred-pass" style="font-weight:700;font-size:1rem;font-family:var(--mono);"></div>
+          </div>
+          <div>
+            <div style="font-size:.72rem;color:var(--muted);margin-bottom:.2rem;">FULL NAME</div>
+            <div id="nc-cred-name" style="font-weight:600;"></div>
+          </div>
+          <div>
+            <div style="font-size:.72rem;color:var(--muted);margin-bottom:.2rem;">PHONE</div>
+            <div id="nc-cred-phone" style="font-weight:600;"></div>
+          </div>
+        </div>
+        <div style="margin-top:.75rem;padding-top:.75rem;border-top:1px solid var(--border);font-size:.78rem;color:var(--muted);">
+          ⚠️ Share these credentials with the customer securely. They can change their password after first login.
+        </div>
+      </div>
+
+      <div style="display:flex;gap:.75rem;">
+        <button class="btn btn-outline" style="flex:1;" onclick="ncPrintCredentials()">🖨️ Print Credentials</button>
+        <button class="btn btn-primary" style="flex:1;" onclick="ncReset()">➕ Add Another Customer</button>
+        <button class="btn btn-outline" style="flex:1;" onclick="navigateTo('customers')">View All Customers</button>
+      </div>
     </div>
   </div>`;
 }
 
+function ncMeterChange(val){
+  const wrap=q('#nc-manual-wrap');
+  const display=q('#nc-uname-display');
+  if(val==='__manual__'){
+    if(wrap)wrap.style.display='';
+    if(display)display.value='';
+  } else {
+    if(wrap)wrap.style.display='none';
+    if(display)display.value=val||'';
+    // auto-fill area from meter data
+    if(val){
+      const meters=STORE.get('meters')||[];
+      const m=meters.find(x=>x.meterNo===val);
+      if(m){
+        const areaEl=q('#nc-area');
+        const typeEl=q('#nc-type');
+        if(areaEl&&!areaEl.value)areaEl.value=m.area||'';
+        if(typeEl&&m.type){
+          [...typeEl.options].forEach(o=>{if(o.value===m.type)o.selected=true;});
+        }
+      }
+    }
+  }
+}
+
+function ncAutoPass(){
+  const phone=q('#nc-phone')?.value.trim()||'';
+  const passEl=q('#nc-pass');
+  if(passEl&&phone.length>=4&&!passEl._userEdited){
+    passEl.value=phone.slice(-4)+'water';
+  }
+}
+
+function ncGenPass(){
+  const chars='abcdefghjkmnpqrstuvwxyz23456789';
+  let p='';for(let i=0;i<8;i++)p+=chars[Math.floor(Math.random()*chars.length)];
+  const passEl=q('#nc-pass');
+  if(passEl){passEl.value=p;passEl._userEdited=true;}
+}
+
+function ncReset(){
+  navigateTo('customers');
+  setTimeout(()=>{
+    const tabs=qa('[onclick*="cust-add"]');
+    if(tabs.length)mTab(tabs[0],'cust-add');
+  },80);
+}
+
+function ncPrintCredentials(){
+  const name=q('#nc-cred-name')?.textContent||'';
+  const user=q('#nc-cred-user')?.textContent||'';
+  const pass=q('#nc-cred-pass')?.textContent||'';
+  const phone=q('#nc-cred-phone')?.textContent||'';
+  const s=STORE.get('settings')||{};
+  const w=window.open('','_blank','width=480,height=400');
+  w.document.write(`<!DOCTYPE html><html><head><title>Login Credentials</title>
+  <style>body{font-family:Arial,sans-serif;padding:2rem;color:#111;}
+  h2{margin-bottom:.25rem;}p.sub{color:#666;font-size:.85rem;margin-top:0;}
+  .box{border:2px solid #0af;border-radius:10px;padding:1.25rem;margin:1.5rem 0;background:#f0fbff;}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:.75rem;}
+  .lbl{font-size:.72rem;color:#888;margin-bottom:.15rem;}
+  .val{font-weight:700;font-size:1.05rem;font-family:monospace;}
+  .warn{font-size:.78rem;color:#888;border-top:1px solid #ddd;padding-top:.75rem;margin-top:.75rem;}
+  footer{text-align:center;font-size:.75rem;color:#aaa;margin-top:2rem;}
+  </style></head><body>
+  <h2>${s.company||'H2O Water Limited'}</h2>
+  <p class="sub">Customer Portal — Login Credentials</p>
+  <div class="box">
+    <div class="row">
+      <div><div class="lbl">CUSTOMER NAME</div><div class="val">${name}</div></div>
+      <div><div class="lbl">PHONE</div><div class="val">${phone}</div></div>
+    </div>
+    <div class="row">
+      <div><div class="lbl">USERNAME (Meter No.)</div><div class="val">${user}</div></div>
+      <div><div class="lbl">PASSWORD</div><div class="val">${pass}</div></div>
+    </div>
+    <div class="warn">⚠️ Keep these details confidential. Visit the customer portal to log in and change your password after first access.</div>
+  </div>
+  <footer>Generated by AquaFlow Billing System — ${new Date().toLocaleDateString('en-KE')}</footer>
+  </body></html>`);
+  w.document.close();
+  w.print();
+}
+
 function saveNewCustomer(){
   const name=q('#nc-name')?.value.trim();
-  const meter=q('#nc-meter')?.value.trim();
-  if(!name||!meter){toast('Name and meter number required','error');return;}
+  const phone=q('#nc-phone')?.value.trim();
+  const meterSel=q('#nc-meter')?.value;
+  const meterManual=q('#nc-meter-manual')?.value.trim();
+  const meter=meterSel==='__manual__'?meterManual:meterSel;
+  const pass=q('#nc-pass')?.value.trim();
+
+  if(!name){toast('Full name is required','error');return;}
+  if(!meter){toast('Please assign a meter number','error');return;}
+  if(!pass){toast('Password is required','error');return;}
+
   const customers=STORE.get('customers')||[];
-  if(customers.find(c=>c.meter===meter)){toast('Meter number already exists','error');return;}
+  if(customers.find(c=>c.meter===meter)){toast('That meter number is already assigned to another customer','error');return;}
+
+  const id='c'+uid();
   customers.push({
-    id:'c'+uid(),name,meter,email:q('#nc-email')?.value,phone:q('#nc-phone')?.value,
-    area:q('#nc-area')?.value,address:q('#nc-addr')?.value,
-    type:q('#nc-type')?.value||'Residential',status:'active',
-    joinDate:q('#nc-date')?.value,password:q('#nc-pass')?.value||'water123',notes:[]
+    id,name,meter,
+    email:q('#nc-email')?.value.trim(),
+    phone,
+    idNo:q('#nc-idno')?.value.trim(),
+    area:q('#nc-area')?.value.trim(),
+    address:q('#nc-addr')?.value.trim(),
+    type:q('#nc-type')?.value||'Residential',
+    status:'active',
+    joinDate:q('#nc-date')?.value,
+    password:pass,
+    notes:[]
   });
   STORE.set('customers',customers);
-  toast(`Customer ${name} registered!`,'success');
-  navigateTo('customers');
+
+  // Link meter to customer if it exists in meters table
+  const meters=STORE.get('meters')||[];
+  const mi=meters.findIndex(m=>m.meterNo===meter);
+  if(mi>-1){meters[mi].customerId=id;STORE.set('meters',meters);}
+
+  // Show success card
+  q('#nc-form-card').style.display='none';
+  const sc=q('#nc-success-card');
+  sc.style.display='';
+  q('#nc-success-subtitle').textContent=`${name} has been added to the system.`;
+  q('#nc-cred-user').textContent=meter;
+  q('#nc-cred-pass').textContent=pass;
+  q('#nc-cred-name').textContent=name;
+  q('#nc-cred-phone').textContent=phone||'—';
+
+  // Notification
+  const notifs=STORE.get('notifications')||[];
+  notifs.unshift({id:'n'+uid(),type:'info',to:'admin',title:`New Customer Registered – ${name}`,
+    msg:`${name} (${meter}) has been registered. Portal login created.`,
+    date:new Date().toISOString().split('T')[0],read:false,priority:'normal'});
+  STORE.set('notifications',notifs);
+  toast(`${name} registered successfully!`,'success');
 }
 
 function editCustModal(id){
